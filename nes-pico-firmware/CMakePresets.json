@@ -1,0 +1,56 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "pico",
+      "hidden": false,
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build_pico",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PICO_SDK_PATH": "C:\\VSARM\\sdk\\pico\\pico-sdk",
+        "PICO_BUILD": "ON"
+      },
+      "toolchainFile": "C:\\VSARM\\sdk\\pico\\pico-sdk\\cmake\\preload\\toolchains\\pico_arm_gcc.cmake" 
+    },
+    {
+      "name": "unit_tests",
+      "hidden": false,
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build_tests",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "UNIT_TESTS_BUILD": "ON",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_VERBOSE_MAKEFILE:BOOL":"ON",
+        "HAVE_CLOCK_GETTIME" : "0"
+      }
+      
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build_pico",
+      "configurePreset": "pico",
+      "hidden": false
+    },
+    {
+      "name": "build_tests",
+      "configurePreset": "unit_tests",
+      "hidden": false
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test_all",
+      "configurePreset": "unit_tests",
+      "hidden": false
+      
+    }
+  ]
+}

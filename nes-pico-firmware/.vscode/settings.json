@@ -1,0 +1,46 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Unit Tests",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build_tests/unit_tests",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "preLaunchTask": "CMake: build_tests",      
+      "setupCommands": [
+        {
+          "text": "-enable-pretty-printing",
+          "description": "Enable pretty-printing for gdb",
+          "ignoreFailures": true
+        }
+      ],
+      "logging": {
+        "moduleLoad": false,
+        "trace": false
+      }
+    }
+  ],
+  "files.associations": {
+    "rc_internal.h": "c",
+    "rc_util.h": "c",
+    "stdint.h": "c",
+    "rc_runtime_types.h": "c",
+    "cstdlib": "c",
+    "stdlib.h": "c",
+    "limits.h": "c",
+    "cstdint": "cpp",
+    "rc_error.h": "c",
+    "retroachievements.h": "c",
+    "rc_client.h": "c",
+    "memory-bus.pio.h": "c",
+    "uart.h": "c",
+    "timer.h": "c",
+    "stdio.h": "c"
+  }
+}

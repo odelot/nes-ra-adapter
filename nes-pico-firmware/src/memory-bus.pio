@@ -1,0 +1,29 @@
+.program memoryBus
+
+
+.wrap_target
+    wait 0 pin 25   ; wait for R/W to go LOW
+    wait 1 pin 23   ; wait for M2 to go HIGH
+    in pins 32      ;capture 
+.wrap
+
+% c-sdk {
+
+void memoryBus_program_init(PIO pio, uint sm, uint offset, float div) {
+    pio_sm_config c = memoryBus_program_get_default_config(offset);
+    sm_config_set_clkdiv(&c, div); //Clock
+
+    //GPIO setup    
+    pio_sm_set_consecutive_pindirs(pio, sm, 0, 26, false);
+    
+    sm_config_set_in_pins(&c, 0);
+    
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    sm_config_set_in_shift(&c, true, true, 0);
+    
+    pio_sm_init(pio, sm, offset, &c);
+    
+}
+
+%}
