@@ -158,7 +158,7 @@ Adjust image management in LittleFS (currently, ~270 images fit before space run
 
 Everyone is welcome to contribute!
 - Submit improvements and pull requests via GitHub.
-- Join our Discord channel: [https://discord.gg/9atpm3BR](https://discord.gg/9atpm3BR)
+- Join our Discord channel: [https://discord.gg/baM7y3xbsA](https://discord.gg/baM7y3xbsA)
 - Support us by [buying a coffee](https://buymeacoffee.com/nes.ra.adapter) to help with hardware prototype costs.
 
 ---
