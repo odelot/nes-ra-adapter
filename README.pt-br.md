@@ -158,7 +158,7 @@ Ajustar gerenciamento das imagens no LittleFS (hoje cabem cerca de 270 imagens a
 
 Todos estão convidados a colaborar com o projeto!  
 - Envie suas melhorias e pull requests via GitHub.  
-- Participe do nosso canal no Discord: [https://discord.gg/9atpm3BR](https://discord.gg/9atpm3BR)  
+- Participe do nosso canal no Discord: [https://discord.gg/baM7y3xbsA](https://discord.gg/baM7y3xbsA)  
 - Ajude-nos [comprando um café](https://buymeacoffee.com/nes.ra.adapter) para auxiliar nos custos dos protótipos de hardware.
 
 ---
