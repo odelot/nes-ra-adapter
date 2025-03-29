@@ -9,7 +9,7 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
   </a>
 </p>
 
-** -> -> -> One month duration (April) Donation campaign to help the project ([campaign page](https://github.com/odelot/nes-ra-adapter-donation-campaign)) <- <- <- **
+-> -> -> **One month duration (April) Donation campaign to help the project ([campaign page](https://github.com/odelot/nes-ra-adapter-donation-campaign))** <- <- <-
 
 ---
 
