@@ -69,7 +69,7 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 
 \* Fonte: Aliexpress <br/>
 \** Na versão miniaturizada, só será necessário 1 slot <br/>
-\*** Alternativa mais estável ao SN74HC4066 seriam 26x SN74LVC1G3157DBVR (smd) - veja mais detalhes aqui
+\*** Alternativa mais estável ao SN74HC4066 seriam 26x SN74LVC1G3157DBVR (smd) - veja mais detalhes [aqui](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr)
 
 ### Monte o circuito
 
