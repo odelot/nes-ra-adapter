@@ -9,7 +9,7 @@ Repositório do projeto **NES RetroAchievements Adapter** – uma iniciativa mak
   </a>
 </p>
 
-** -> -> -> Campanha de doação com duração de um mês (abril) para ajudar o projeto ([pagina da campanha](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md)) <- <- <- **
+-> -> -> **Campanha de doação com duração de um mês (abril) para ajudar o projeto ([pagina da campanha](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md))** <- <- <-
 
 ---
 
