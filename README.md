@@ -123,7 +123,7 @@ The adapter uses two microcontrollers working together:
 
 - **Frame and reset detection:** It is not possible to detect a frame by simply inspecting cartridge signals. A heuristic is used, which has shown good results so far, but there is no guarantee it will work for all achievements. Additionally, console RESET detection is not yet implemented, requiring the console to be turned off and on for a reset.
 
-- **Server Response Size:** RAM is limited to 32KB for storing the RetroAchievements response, which includes the list of achievements and memory addresses to monitor. A function AWS Lambda will be published to remove unnecessary fields or reduce the achievement list, ensuring the response fits within this limit.
+- **Server Response Size:** RAM is limited to 32KB for storing the RetroAchievements response, which includes the list of achievements and memory addresses to monitor. The source-code of a AWS Lambda function is available (misc folder) to remove unnecessary fields or reduce the achievement list, ensuring the response fits within this limit.
 
 ---
 
