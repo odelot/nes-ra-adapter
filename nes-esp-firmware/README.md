@@ -67,7 +67,7 @@ Before compiling, adjust the settings in Arduino IDE:
 2. Configure the following options:  
 
    - **USB CDC On Boot**: Enabled
-   - **CPU Frequency**: 160MHz (WiFi)   
+   - **CPU Frequency**: 80MHz (WiFi)   
    - **Core Debug Level**: None  
    - **Erase All Flash Before Sketch Upload**: Disabled  
    - **Flash Size**: 4MB (32Mb)  
