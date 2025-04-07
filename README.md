@@ -129,7 +129,7 @@ The adapter uses two microcontrollers working together:
 
 ## General Information
 
-- **Power Consumption:** The adapter typically consumes 0.125A (max ~0.275A). The LCD screen consumes about 0.035A. Running the Pico at 200MHz (still in testing) may save approximately 0.01A.Consumption is within the limit of the 7805 voltage regulator present in the NES
+- **Power Consumption:** The adapter typically consumes 0.105A (max ~0.220A). The LCD screen consumes about 0.035A. Consumption is within the limit of the 7805 voltage regulator present in the NES
 
 - **Logic Level Conversion (5V vs 3.3V):** The prototypes do not use logic level conversion to avoid signal delays. The bus between the cartridge and the NES is disabled when identifying the cartridge (not affecting the NES), and current levels are within Pico’s limits. In the final version, current limiting will be considered to reduce stress on the Pico. If someone in the community identifies the need for level shifting and develops a test scheme without compromising signals, contributions are welcome.
 
