@@ -1,25 +1,25 @@
 /**********************************************************************************
                 NES RA Adapter - Raspberry Pi Pico Firmware
 
-   This project is the Raspberry Pi Pico firmware for the NES RA Adapter, a device 
-   that connects to an NES console and enables users to connect to the RetroAchievements 
+   This project is the Raspberry Pi Pico firmware for the NES RA Adapter, a device
+   that connects to an NES console and enables users to connect to the RetroAchievements
    server to unlock achievements in games played on original hardware.
 
-   The Pico firmware has two main responsibilities. The first is to read a portion of 
-   the cartridge to calculate the CRC and identify the game; the second is to monitor 
+   The Pico firmware has two main responsibilities. The first is to read a portion of
+   the cartridge to calculate the CRC and identify the game; the second is to monitor
    the bus for memory writes and process them using the rcheevos library.
 
-    * Core 0 handles CRC calculation, executes the rcheevos routines, and manages serial 
+    * Core 0 handles CRC calculation, executes the rcheevos routines, and manages serial
       communication with the ESP32 (primarily for Internet connectivity).
-    
-    * Core 1 monitors the bus for specific memory addresses and sends relevant data to 
-      Core 0. We intercept the bus using PIO and apply a heuristic to detect stable values 
+
+    * Core 1 monitors the bus for specific memory addresses and sends relevant data to
+      Core 0. We intercept the bus using PIO and apply a heuristic to detect stable values
       during write operations. To ensure data integrity, we use DMA to transfer the PIO data
-      into a ping-pong buffer, which is then processed by Core 1. When a memory address of 
+      into a ping-pong buffer, which is then processed by Core 1. When a memory address of
       interest is identified, the data is forwarded to Core 0.
 
-    Inter-core communication is managed via a circular buffer. Please note that the available 
-    space for serial communication is limited to around 32KB, which restricts the size of 
+    Inter-core communication is managed via a circular buffer. Please note that the available
+    space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
    Date:             2025-03-29
@@ -28,7 +28,7 @@
 
    Libs used:
    rcheevos: https://github.com/RetroAchievements/rcheevos
-   
+
    Compiled with Pico SDK 1.5.1
 
    This program is free software: you can redistribute it and/or modify
@@ -64,6 +64,9 @@
 #include "hardware/dma.h"
 #include "hardware/structs/systick.h"
 #include "hardware/timer.h"
+#include "hardware/spi.h"
+#include "hardware/i2c.h"
+#include "hardware/adc.h"
 
 #include "memory-bus.pio.h"
 
@@ -79,7 +82,7 @@
 #include "rc_internal.h"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
-// #define RUN_AT_200MHZ
+#define RUN_AT_200MHZ
 
 #define BUS_PIO pio0
 #define BUS_SM 0
@@ -423,7 +426,7 @@ void __not_in_flash_func(dma_handler)()
         // Clear the irq
         dma_channel_acknowledge_irq0(dma_chan_1);
         // Rewrite the write address without triggering the channel
-        dma_channel_set_write_addr(dma_chan_1, buffer_b, false);        
+        dma_channel_set_write_addr(dma_chan_1, buffer_b, false);
         if (reading_A)
         {
             printf("m_"); // m de merda // shit // we should avoid this to happen
@@ -493,9 +496,12 @@ void setupPIO()
     for (int i = 0; i < 26; i++) // reset all GPIOs connected to NES
         gpio_init(i);
     uint offset = pio_add_program(BUS_PIO, &memoryBus_program);
+    // now we need to increase the clock speed to monitor the bus
 #ifdef RUN_AT_200MHZ
-    memoryBus_program_init(BUS_PIO, BUS_SM, offset, (float)6.0f); // div = 6 for 200mhz
+    set_sys_clock_khz(200000, true);
+    memoryBus_program_init(BUS_PIO, BUS_SM, offset, (float)7.0f); // div = 7 for 200mhz
 #else
+    set_sys_clock_khz(250000, true);
     memoryBus_program_init(BUS_PIO, BUS_SM, offset, (float)9.0f); // div = 9 for 250mhz
 #endif
 }
@@ -1078,14 +1084,13 @@ static void log_message(const char *message, const rc_client_t *client)
 }
 
 // Initialize the RetroAchievements client
-rc_client_t* initialize_retroachievements_client(rc_client_t *g_client, rc_client_read_memory_func_t read_memory, rc_client_server_call_t server_call)
+rc_client_t *initialize_retroachievements_client(rc_client_t *g_client, rc_client_read_memory_func_t read_memory, rc_client_server_call_t server_call)
 {
-     // Create the client instance (using a global variable simplifies this example)
+    // Create the client instance (using a global variable simplifies this example)
     g_client = rc_client_create(read_memory, server_call);
 
     // Provide a logging function to simplify debugging
     rc_client_enable_logging(g_client, RC_CLIENT_LOG_LEVEL_VERBOSE, log_message);
-
 
     // Disable hardcore - if we goof something up in the implementation, we don't want our
     // account disabled for cheating.
@@ -1103,18 +1108,29 @@ void shutdown_retroachievements_client(rc_client_t *g_client)
     }
 }
 
+// save energy function - deinit all unsued peripherals and set the system clock to 48MHz
+void save_energy()
+{
+    set_sys_clock_khz(48000, true);
+    for (int pin = 26; pin <= 27; pin += 1)
+    {
+        gpio_init(pin);
+        gpio_set_dir(pin, GPIO_IN);
+        gpio_pull_down(pin); // Evita flutuação
+    }
+    spi_deinit(spi0);
+    spi_deinit(spi1);
+    i2c_deinit(i2c0);
+    i2c_deinit(i2c1);
+    adc_run(false);
+}
+
 // main function - entry point
 int main()
 {
 
-// overclock raspberry pi pico
-#ifdef RUN_AT_200MHZ
-    set_sys_clock_khz(200000, true);
-#else
-    set_sys_clock_khz(250000, true);
-#endif
-
     stdio_init_all();
+    save_energy();
     reset_GPIO();
 
     // clear serial buffer
@@ -1131,7 +1147,7 @@ int main()
     uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
     uart_set_fifo_enabled(UART_ID, true);
 
-    printf("PICO_FIRMWARE_VERSION=0.1\r\n");
+    printf("PICO_FIRMWARE_VERSION=0.2\r\n");
 
     // debug info
     unsigned int frame_counter = 0;

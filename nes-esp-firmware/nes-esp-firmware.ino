@@ -57,6 +57,10 @@
 #include <TFT_eSPI.h>
 #include "HardwareSerial.h"
 #include "LittleFS.h"
+#include <esp_sleep.h>
+#include <driver/uart.h>
+#include <driver/adc.h>
+#include <Wire.h>
 
 /**
  * defines for the LittleFS
@@ -676,6 +680,7 @@ void clean_screen_text()
 // show the title screen
 void show_title_screen()
 {
+  setCpuFrequencyMhz(160);
   tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
 
   tft.setTextSize(1);
@@ -700,10 +705,12 @@ void show_title_screen()
     png.close();
   }
   already_showed_title_screen = true;
+  setCpuFrequencyMhz(80);
 }
 
 void show_achievement(achievements_t achievement)
 {
+  setCpuFrequencyMhz(160);
   tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
   print_line("New Achievement Unlocked!", 0, 0);
   print_line("", 1, 0);
@@ -732,6 +739,7 @@ void show_achievement(achievements_t achievement)
   play_sound_achievement_unlocked();
   go_back_to_title_screen = true;
   go_back_to_title_screen_timestamp = millis();
+  setCpuFrequencyMhz(80);
 }
 
 // callback function to draw pixels to the display
@@ -1016,7 +1024,10 @@ bool prefix(const char *pre, const char *str)
 // arduino-esp32 entry point
 void setup()
 {
-  
+  setCpuFrequencyMhz(80);
+  // disable i2c
+  Wire.end();
+ 
   // config analog switch control pin
   pinMode(ANALOG_SWITCH_PIN, OUTPUT);
   digitalWrite(ANALOG_SWITCH_PIN, ANALOG_SWITCH_DISABLE_BUS); // isolate the cartridge from NES
@@ -1053,9 +1064,10 @@ void setup()
   if (Serial0.available() > 0)
   {
     Serial0.readString();
+    delay (10);
   }
 
-  Serial0.print("ESP32_VERSION=0.1\r\n"); // send the version to the pico - debug
+  Serial0.print("ESP32_VERSION=0.2\r\n"); // send the version to the pico - debug
   Serial0.print("RESET\r\n");             // reset the pico
   delay(250);
 
@@ -1151,7 +1163,7 @@ void setup()
     {
       WiFi.begin();
       while (WiFi.status() != WL_CONNECTED)
-        yield();
+        delay (500);
     }
     print_line("Wifi OK!", 0, 0); // TODO: implement timeout
     String ra_user = read_ra_user_from_eeprom();
@@ -1181,6 +1193,11 @@ void setup()
   delay(250);
   state = 0;
   Serial.print("setup end"); // debug
+
+  // modem sleep
+  WiFi.setSleep(true);
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+
 }
 
 // arduino-esp32 main loop
@@ -1278,7 +1295,7 @@ void loop()
       {
         // example of request
         // REQ=FF;M:POST;U:https://retroachievements.org/dorequest.php;D:r=login2&u=user&p=pass
-        const char user_agent[] = "NES_RA_ADAPTER/0.1 rcheevos/11.6";
+        const char user_agent[] = "NES_RA_ADAPTER/0.2 rcheevos/11.6";
 
         String request = command.substring(4);
         // Serial.println("REQ=" + request);
@@ -1411,7 +1428,7 @@ void loop()
             Serial.print("\r\n");
         } else {
           state = 199;
-        }
+        }                
       }
       // controls analog switch - useful for debugging send commands via Serial Monitor
       else if (command.startsWith("ANALOG_SWITCH="))
