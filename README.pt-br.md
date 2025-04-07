@@ -9,7 +9,7 @@ Repositório do projeto **NES RetroAchievements Adapter** – uma iniciativa mak
   </a>
 </p>
 
-** -> -> -> Campanha de doação com duração de um mês (abril) para ajudar o projeto ([pagina da campanha](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md)) <- <- <- **
+-> -> -> **Campanha de doação com duração de um mês (abril) para ajudar o projeto ([pagina da campanha](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md))** <- <- <-
 
 ---
 
@@ -69,7 +69,7 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 
 \* Fonte: Aliexpress <br/>
 \** Na versão miniaturizada, só será necessário 1 slot <br/>
-\*** Alternativa mais estável ao SN74HC4066 seriam 26x SN74LVC1G3157DBVR (smd) - veja mais detalhes aqui
+\*** Alternativa mais estável ao SN74HC4066 seriam 26x SN74LVC1G3157DBVR (smd) - veja mais detalhes [aqui](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr)
 
 ### Monte o circuito
 
@@ -158,7 +158,7 @@ Ajustar gerenciamento das imagens no LittleFS (hoje cabem cerca de 270 imagens a
 
 Todos estão convidados a colaborar com o projeto!  
 - Envie suas melhorias e pull requests via GitHub.  
-- Participe do nosso canal no Discord: [https://discord.gg/9atpm3BR](https://discord.gg/9atpm3BR)  
+- Participe do nosso canal no Discord: [https://discord.gg/baM7y3xbsA](https://discord.gg/baM7y3xbsA)  
 - Ajude-nos [comprando um café](https://buymeacoffee.com/nes.ra.adapter) para auxiliar nos custos dos protótipos de hardware.
 
 ---

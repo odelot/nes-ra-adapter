@@ -9,7 +9,7 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
   </a>
 </p>
 
-** -> -> -> One month duration (April) Donation campaign to help the project ([campaign page](https://github.com/odelot/nes-ra-adapter-donation-campaign)) <- <- <- **
+-> -> -> **One month duration (April) Donation campaign to help the project ([campaign page](https://github.com/odelot/nes-ra-adapter-donation-campaign))** <- <- <-
 
 ---
 
@@ -69,7 +69,7 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 
 \* Source: Aliexpress <br/>
 \** In the miniaturized version, only 1 slot is needed <br/>
-\*** A more stable alternative to SN74HC4066 would be 26x SN74LVC1G3157DBVR (SMD) - see details here.
+\*** A more stable alternative to SN74HC4066 would be 26x SN74LVC1G3157DBVR (SMD) - see details [here](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr).
 
 ### Assemble the Circuit
 
@@ -123,7 +123,7 @@ The adapter uses two microcontrollers working together:
 
 - **Frame and reset detection:** It is not possible to detect a frame by simply inspecting cartridge signals. A heuristic is used, which has shown good results so far, but there is no guarantee it will work for all achievements. Additionally, console RESET detection is not yet implemented, requiring the console to be turned off and on for a reset.
 
-- **Server Response Size:** RAM is limited to 32KB for storing the RetroAchievements response, which includes the list of achievements and memory addresses to monitor. A function AWS Lambda will be published to remove unnecessary fields or reduce the achievement list, ensuring the response fits within this limit.
+- **Server Response Size:** RAM is limited to 32KB for storing the RetroAchievements response, which includes the list of achievements and memory addresses to monitor. The source-code of a AWS Lambda function is available (misc folder) to remove unnecessary fields or reduce the achievement list, ensuring the response fits within this limit.
 
 ---
 
@@ -158,7 +158,7 @@ Adjust image management in LittleFS (currently, ~270 images fit before space run
 
 Everyone is welcome to contribute!
 - Submit improvements and pull requests via GitHub.
-- Join our Discord channel: [https://discord.gg/9atpm3BR](https://discord.gg/9atpm3BR)
+- Join our Discord channel: [https://discord.gg/baM7y3xbsA](https://discord.gg/baM7y3xbsA)
 - Support us by [buying a coffee](https://buymeacoffee.com/nes.ra.adapter) to help with hardware prototype costs.
 
 ---
