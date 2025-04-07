@@ -150,6 +150,7 @@ Adjust image management in LittleFS (currently, ~270 images fit before space run
 
 ## Version History
 
+- **Version 0.2** – Optimizations to reduce energy consumption.
 - **Version 0.1** – Initial prototype version.
 
 ---
