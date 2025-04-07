@@ -151,8 +151,8 @@ Ajustar gerenciamento das imagens no LittleFS (hoje cabem cerca de 270 imagens a
 
 ## Histórico de Versões
 
-- **Versão 0.1** – Versão inicial do protótipo.
 - **Versão 0.2** – Otimizações para redução do consumo energético. 
+- **Versão 0.1** – Versão inicial do protótipo.
 ---
 
 ## Contribuições
