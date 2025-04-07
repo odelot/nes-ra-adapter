@@ -130,7 +130,7 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 ## Informações Gerais
 
-- **Consumo Energético**: O adaptador consome tipicamente 0.125A (máximo ~0.275A). A tela LCD consome cerca de 0.035A. Rodando o Pico em 200MHz (ainda em testes) pode economizar aproximadamente 0.01A. O consumo está dentro do limite do regulador de tensão 7805 presente no NES <br/>
+- **Consumo Energético**: O adaptador consome tipicamente 0.105A (máximo ~0.220A). A tela LCD consome cerca de 0.035A. O consumo está dentro do limite do regulador de tensão 7805 presente no NES <br/>
 
 - **Conversão de Níveis Lógicos (5V vs 3.3V)**: Nos protótipos, não usamos conversão de nível lógico para evitar atrasos nos sinais que possam comprometer o funcionamento. O barramento entre o cartucho e o NES está desativado quando o cartucho é identificado (não comprometendo o NES), e os níveis de corrente estão dentro dos limites do Pico. Durante a leitura do barramento, todas as portas ligadas ao barramento estão em modo leitura e são 5v tolerantes. Na versão final, o GH pretende limitar a corrente para reduzir o stress no Pico. Se alguém da comunidade identificar a necessidade de conversão de nível e desenvolver um esquema de teste sem comprometer os sinais, contribuições são bem-vindas.
 
@@ -152,6 +152,7 @@ Ajustar gerenciamento das imagens no LittleFS (hoje cabem cerca de 270 imagens a
 ## Histórico de Versões
 
 - **Versão 0.1** – Versão inicial do protótipo.
+- **Versão 0.2** – Otimizações para redução do consumo energético. 
 ---
 
 ## Contribuições
