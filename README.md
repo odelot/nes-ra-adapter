@@ -25,6 +25,7 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
 - [Version History](#version-history)
 - [Contributions](#contributions)
 - [License](#license)
+- [FAQ](#faq)
 - [Acknowledgments](#acknowledgments)
 - [Similar Projects](#similar-projects)
 
@@ -169,6 +170,12 @@ Everyone is welcome to contribute!
 - This project source code is distributed under the **GPLv3** license.
 - The PCB circuits are distributed under **CC-BY-4.0** license.
 - The 3d parts are distributed under **CC-BY-NC-4.0** license.
+
+---
+
+## FAQ
+
+The FAQ will be available [here](https://github.com/odelot/nes-ra-adapter-donation-campaign/tree/main?tab=readme-ov-file#faq) during the donation campaign.
 
 ---
 
