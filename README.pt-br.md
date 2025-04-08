@@ -164,6 +164,12 @@ Todos estão convidados a colaborar com o projeto!
 
 ---
 
+## FAQ
+
+O FAQ estará disponível [aqui](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md#faq---perguntas-frequentes) durante a campanha de doação.
+
+---
+
 ## Licença
 
 - O código fonte desse projeto é distribuído sob a licença **GPLv3**.
