@@ -35,6 +35,7 @@ todos os jogos foram testado com o protótipo v0.2 ainda em desenvolvimento usan
 | Punch-Out!!                                           | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{green}Yes}$$     | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | R.C. PRO AM                                           | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{green}Yes}$$     | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | R.C. PRO AM (REV A)                                   | $${\color{red}No}$$    | $${\color{green}Yes}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
+| Robocop                                               | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{green}Yes}$$     | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | Rad Racer                                             | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{green}Yes}$$     | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | Rad Racer 2                                           | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | Castlevania                                           | $${\color{green}Yes}$$ | $${\color{red}No}$$    | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
@@ -52,5 +53,3 @@ todos os jogos foram testado com o protótipo v0.2 ainda em desenvolvimento usan
 | World Class Track Meet                                | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | Xevious                                               | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{green}Yes}$$     | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
 | Zelda II: The Adventure of Link                       | $${\color{green}Yes}$$ | $${\color{green}Yes}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | $${\color{grey}Not\ yet}$$ | 
-
-OBS: Robocop was not working (shell problem) and Dragon Warrior had CIC problem
