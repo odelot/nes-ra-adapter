@@ -25,6 +25,7 @@ Repositório do projeto **NES RetroAchievements Adapter** – uma iniciativa mak
 - [Histórico de Versões](#histórico-de-versões)
 - [Contribuições](#contribuições)
 - [Licença](#licença)
+- [FAQ](#faq)
 - [Agradecimentos](#agradecimentos)
 - [Projetos Semelhantes](#projetos-semelhantes)
 
@@ -49,7 +50,7 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 - **nes-esp-firmware**: código fonte do firmware usado no ESP32 C3 Super Mini
 - **hardware**: schematics para construir sua versão em protoboard / placa perfurada e arquivos das PCBs dos protótipos v0.1 e v0.2
 - **3d parts**: arquivos do fusion 360 e STL das peças modeladas para o case idealizado, com inspiração no Game Genie
-- **misc**ellaneous: arquivos e ferramentas auxiliares (criador do mapa de CRC32<->RA Hashes / lambda que encolhe response do RA / config do TFT)
+- **misc**ellaneous: arquivos e ferramentas auxiliares (Web App de espelhamento do LCD / criador do mapa de CRC32<->RA Hashes / lambda que encolhe response do RA / config do TFT)
 
 ---
 
@@ -67,7 +68,7 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 | Buzzer 3v + Transistor BC548   | 1x         | ~ U$1,25               |
 | **Total** (sem PCB, case 3d)   |            | ~ **U$20,50**          |
 
-\* Fonte: Aliexpress <br/>
+\* Fonte: Aliexpress - 2025-03-29 <br/>
 \** Na versão miniaturizada, só será necessário 1 slot <br/>
 \*** Alternativa mais estável ao SN74HC4066 seriam 26x SN74LVC1G3157DBVR (smd) - veja mais detalhes [aqui](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr)
 
@@ -114,6 +115,7 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 - **Conectividade e Interface:** Fornece Internet ao NES e gerencia uma tela TFT para exibir conquistas, além de um buzzer para efeitos sonoros. 
 - **Gerenciamento de Configuração:** Armazena credenciais de Wi-Fi e RetroAchievements na EEPROM; configuração é feita via smartphone conectado ao ponto de acesso do ESP32. 
 - **Sistema de Arquivos e Comunicação:** Utiliza LittleFS para armazenar uma tabela de hash (CRC32 para MD5) para identificação de cartuchos e imagens dos jogos. 
+- **EXPERIMENTAL – Transmite o conteúdo da LCD para uma Web App** Utiliza WebSocket e mDNS para servir uma página web que espelha o conteúdo da telinha LCD e exibe eventos de conquistas adicionais que não cabem na tela física. (Mais detalhes disponíveis na pasta `misc`) O web app fica disponível assim que a imagem do jogo aparece na LCD e pode ser acessado em `http://nes-ra-adapter.local` — certifique-se de que seu smartphone esteja conectado à mesma rede Wi-Fi.
 
 ---
 
@@ -144,15 +146,13 @@ Desenvolver uma placa do tamanho aproximado de um Game Genie que caiba no slot d
 ### 2 - Adaptar o Case ao Circuito Miniaturizado:
 Atualizar o case (atualmente inspirado no Game Genie) para se adequar ao novo formato do circuito.
 
-### 3 - Otimizações no Código-Fonte:
-Ajustar gerenciamento das imagens no LittleFS (hoje cabem cerca de 270 imagens antes do espaço acabar), reduzir a fragmentação de memoria no ESP32, tratamento de erros HTTP (retries, timeouts) e melhorias na comunicação entre o Pico e o ESP32 e na eficiencia energetica.
-
 ---
 
 ## Histórico de Versões
 
-- **Versão 0.2** – Otimizações para redução do consumo energético. 
-- **Versão 0.1** – Versão inicial do protótipo.
+- **Versão 0.3 (2025-04-24)** – Melhorias no tratamento de erros, otimização do uso de RAM e implementação de uma funcionalidade experimental para transmitir o conteúdo da telinha LCD para um smartphone.
+- **Versão 0.2 (2025-04-07)** – Otimizações para redução do consumo energético. 
+- **Versão 0.1 (2025-03-28)** – Versão inicial do protótipo.
 ---
 
 ## Contribuições

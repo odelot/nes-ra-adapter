@@ -50,7 +50,7 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 - **nes-esp-firmware**: source code for the firmware used on the ESP32 C3 Super Mini.
 - **hardware**: schematics for building your version on a protoboard/perfboard and PCB files for prototype versions v0.1 and v0.2.
 - **3d parts**: Fusion 360 and STL files for the modeled case, inspired by the Game Genie.
-- **misc**ellaneous: auxiliary tool and files (CRC32<->RA Hash map creator / AWS Lambda to shrink RA response / TFT config).
+- **misc**ellaneous: auxiliary tool and files (LCD mirror Web App / CRC32<->RA Hash map creator / AWS Lambda to shrink RA response / TFT config).
 
 ---
 
@@ -68,7 +68,7 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 | Buzzer 3V + Transistor BC548     | 1x         | ~ $1.25              |
 | **Total** (without PCB, 3D case) |            | ~ **$20.50**         |
 
-\* Source: Aliexpress <br/>
+\* Source: Aliexpress - 2025-03-29 <br/>
 \** In the miniaturized version, only 1 slot is needed <br/>
 \*** A more stable alternative to SN74HC4066 would be 26x SN74LVC1G3157DBVR (SMD) - see details [here](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr).
 
@@ -115,6 +115,7 @@ The adapter uses two microcontrollers working together:
 - **Connectivity and Interface:** Provides Internet to the NES and manages a TFT screen to display achievements, along with a buzzer for sound effects.
 - **Configuration Management:** Stores Wi-Fi and RetroAchievements credentials in EEPROM; configuration is done via smartphone connected to the ESP32 access point.
 - **File System and Communication:** Uses LittleFS to store a hash table (CRC32 to MD5) for cartridge identification and game images.
+- **EXPERIMENTAL – Streams LCD content to a Web App** - Uses WebSocket and mDNS to serve a web app that mirrors the LCD display and shows additional achievement events that don’t fit on the physical screen. (More details available in the `misc` folder.) The web app becomes available as soon as the game image appears on the LCD and can be accessed at `http://nes-ra-adapter.local` — make sure your smartphone is connected to the same Wi-Fi network.
 
 ---
 
@@ -144,15 +145,13 @@ Develop a board approximately the size of a Game Genie that fits into the NES 00
 ### 2 - Adapt the Case to the Miniaturized Circuit:
 Update the case (currently inspired by the Game Genie) to fit the new circuit layout.
 
-### 3 - Optimize the Source Code:
-Adjust image management in LittleFS (currently, ~270 images fit before space runs out), reduce memory fragmentation on ESP32, improve HTTP error handling (retries, timeouts), and enhance Pico-ESP32 communication and power usage.
-
 ---
 
 ## Version History
 
-- **Version 0.2** – Optimizations to reduce energy consumption.
-- **Version 0.1** – Initial prototype version.
+- **Version 0.3 (2025-04-24)** – Improve error handling, optimize ram usage, deployed an experimental feature to stream the content of the tiny LCD to a smartphone
+- **Version 0.2 (2025-04-07)** – Optimizations to reduce energy consumption.
+- **Version 0.1 (2025-03-28)** – Initial prototype version.
 
 ---
 

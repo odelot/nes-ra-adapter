@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-03-29
-   Version:          0.1
+   Date:             2025-04-24
+   Version:          0.3
    By odelot
 
    Libs used:
@@ -67,6 +67,7 @@
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "hardware/adc.h"
+#include "hardware/watchdog.h"
 
 #include "memory-bus.pio.h"
 
@@ -80,6 +81,8 @@
 #include "rc_hash.h"
 #include "rc_version.h"
 #include "rc_internal.h"
+
+#define FIRMWARE_VERSION "0.3"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -202,13 +205,14 @@ static const uint32_t crc_32_tab[] = {
  */
 
 volatile io_ro_32 *rxf;
+uint PIO_offset;
 mutex_t cpu_bus_mutex;
 
 /*
  * Serial buffer to handle commands from the ESP32
  */
 
-#define SERIAL_BUFFER_SIZE 32768
+#define SERIAL_BUFFER_SIZE 32768 // maybe we can increase this more 8kb
 u_char serial_buffer[SERIAL_BUFFER_SIZE];
 u_char *serial_buffer_head = serial_buffer;
 
@@ -217,13 +221,14 @@ u_char *serial_buffer_head = serial_buffer;
  * Used to send data from Core 1 to Core 0
  */
 
-#define MEMORY_BUFFER_SIZE 4096
+#define MEMORY_BUFFER_SIZE 4096 // maybe we can decrease it to 2048 - games like FF that uses a lot of addresses reached ~500 
 volatile int memory_head = 0;
 volatile int memory_tail = 0;
+volatile int memory_max = 0;
 
 struct _memory_unit
 {
-    uint32_t address;
+    uint16_t address;
     uint8_t data;
 };
 
@@ -491,19 +496,27 @@ void setup_dma()
  */
 
 // initialize the PIO program
-void setupPIO()
+void setup_PIO()
 {
+
     for (int i = 0; i < 26; i++) // reset all GPIOs connected to NES
         gpio_init(i);
-    uint offset = pio_add_program(BUS_PIO, &memoryBus_program);
-    // now we need to increase the clock speed to monitor the bus
+    PIO_offset = pio_add_program(BUS_PIO, &memoryBus_program);
 #ifdef RUN_AT_200MHZ
     set_sys_clock_khz(200000, true);
-    memoryBus_program_init(BUS_PIO, BUS_SM, offset, (float)7.0f); // div = 7 for 200mhz
+    memoryBus_program_init(BUS_PIO, BUS_SM, PIO_offset, (float)7.0f); // div = 7 for 200mhz
 #else
     set_sys_clock_khz(250000, true);
     memoryBus_program_init(BUS_PIO, BUS_SM, offset, (float)9.0f); // div = 9 for 250mhz
 #endif
+}
+
+void stop_PIO()
+{
+    pio_sm_set_enabled(BUS_PIO, BUS_SM, false);                  // disable PIO
+    pio_sm_clear_fifos(BUS_PIO, BUS_SM);                         // clear FIFO
+    pio_sm_restart(BUS_PIO, BUS_SM);                             // restart PIO        )
+    pio_remove_program(BUS_PIO, &memoryBus_program, PIO_offset); // remove program from PIO
 }
 
 // returns the number of elements in the circular buffer
@@ -521,8 +534,12 @@ void add_to_memory_buffer(uint32_t address, uint8_t data)
     if (memory_head == memory_tail)
     {
         printf("Buffer full\n"); // this also should not happen
-        // Buffer full, discard or replace oldest data
+        // Buffer is full, discard or replace oldest data
         memory_tail = (memory_tail + 1) % MEMORY_BUFFER_SIZE;
+    }
+    if (memory_buffer_size() > memory_max) // for debug purposes
+    {
+        memory_max = memory_buffer_size();
     }
 }
 
@@ -607,7 +624,7 @@ void handle_bus_to_detect_memory_writes()
     mutex_init(&cpu_bus_mutex);
     mutex_enter_blocking(&cpu_bus_mutex); // make sure core 1 is fully dedicated to handle the BUS
 
-    setupPIO();
+    setup_PIO();
     setup_dma();
 
     // enabble PIO
@@ -623,7 +640,7 @@ void handle_bus_to_detect_memory_writes()
     read_A = true;
     reading_A = false;
     reading_B = false;
-
+    
     // handle DMA ping-pong and process the buffer that is not being feed
     while (1)
     {
@@ -999,6 +1016,53 @@ static void achievement_triggered(const rc_client_achievement_t *achievement)
     fifo_enqueue(&achievements_fifo, achievement->id);
 }
 
+// send the achievements status to the ESP32
+static void achievement_status(const rc_client_event_t *event)
+{
+    if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW 
+        || event->type == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW
+        || event->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE)
+    {
+        char aux[256];
+        char url[128];  
+        char command[3];
+        if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW) {
+            sprintf(command, "C=");
+        } else {
+            sprintf(command, "P=");
+        }
+        const rc_client_achievement_t *achievement = event->achievement;
+          
+        rc_client_achievement_get_image_url(achievement, event->type, url, sizeof(url));
+        sprintf(aux, "%sS;%u;%s;%s;%s\r\n", command, (unsigned int)achievement->id, achievement->title, url, achievement->measured_progress);
+        printf(aux);
+        uart_puts(UART_ID, aux);
+
+    } else
+    if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE)
+    {
+        unsigned int id = 0;
+        if (event->achievement) {
+            id = event->achievement->id;            
+        }
+        char aux[128];
+        sprintf(aux, "P=H;%u\r\n", id);
+        printf(aux);
+        uart_puts(UART_ID, aux);
+    } else
+    if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE)
+    {
+        unsigned int id = 0;
+        if (event->achievement) {
+            id = event->achievement->id;
+        }
+        char aux[128];
+        sprintf(aux, "C=H;%u\r\n", id);
+        printf(aux);
+        uart_puts(UART_ID, aux);
+    }
+}
+
 // rcheevos event handler - used to enqueue the achievements the user won to be sent to the ESP32
 static void event_handler(const rc_client_event_t *event, rc_client_t *client)
 {
@@ -1007,7 +1071,13 @@ static void event_handler(const rc_client_event_t *event, rc_client_t *client)
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
         achievement_triggered(event->achievement);
         break;
-
+    case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
+    case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
+        achievement_status(event);
+        break;    
     default:
         printf("Unhandled event %d\n", event->type);
         break;
@@ -1108,7 +1178,6 @@ void shutdown_retroachievements_client(rc_client_t *g_client)
     }
 }
 
-// save energy function - deinit all unsued peripherals and set the system clock to 48MHz
 void save_energy()
 {
     set_sys_clock_khz(48000, true);
@@ -1147,7 +1216,8 @@ int main()
     uart_set_format(UART_ID, 8, 1, UART_PARITY_NONE);
     uart_set_fifo_enabled(UART_ID, true);
 
-    printf("PICO_FIRMWARE_VERSION=0.2\r\n");
+    const char nes_pico_firmaware_version[] = "PICO_FIRMWARE_VERSION=%s\r\n";
+    printf(nes_pico_firmaware_version, FIRMWARE_VERSION);
 
     // debug info
     unsigned int frame_counter = 0;
@@ -1242,7 +1312,7 @@ int main()
                     {
                         if (memory_buffer_size() > 0)
                         {
-                            printf("F: %d, BS: %d\n", frame_counter, memory_buffer_size());
+                            printf("F: %d, BS: %d, MAX: %d\n", frame_counter, memory_buffer_size(), memory_max);
                         }
                     }
                 }
@@ -1397,20 +1467,8 @@ int main()
                 {
                     // handle a reset command from ESP32 - reinit all states and clear memory
                     printf("L:RESET\r\n");
-                    uint f_pll_sys = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_PLL_SYS_CLKSRC_PRIMARY);
-                    printf("pll_sys  = %dkHz\n", f_pll_sys);
-                    fifo_init(&achievements_fifo);
-                    state = 0;
-                    nes_reseted = 0;
-                    memset(md5, '\0', 33);
-                    crc_begin = 0xFFFFFFFF;
-                    reset_GPIO();
-
-                    free(unique_memory_addresses);
-                    free(memory_data);
-                    unique_memory_addresses = NULL;
-                    memory_data = NULL;
-                    unique_memory_addresses_count = 0;
+                    // force pico reset - need to wait a while in the esp32
+                    watchdog_reboot(0, 0, 0); // TODO: maybe let esp32 know PICO restarted
                 }
                 else if (prefix("READ_CRC", command))
                 {

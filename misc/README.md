@@ -2,6 +2,19 @@
 
 Here you'll find various files and tools to assist with using or developing for the adapter.
 
+## Web App
+
+This web app replicates the behavior of the adapter's tiny LCD screen, while displaying a bit more information — such as active challenges and achievement progress — similar to how it appears in emulators.
+
+It connects to the ESP32 via WebSocket, enabling real-time communication. As soon as the ESP32 displays information on the physical LCD, it simultaneously sends the same data to any connected client through WebSocket.
+
+A minified version of this web app can be found in the `data` folder of the `nes-esp-firmware` project to save flash space. The ESP32 serves the page using mDNS at:
+http://nes-ra-adapter.local
+
+Please note that it runs over HTTP (not HTTPS) because the firmware doesn't have enough free RAM to support SSL. This limitation also affects some HTML5 features — such as push notifications and the ability to keep the screen always on. If you're using a browser, you'll need to manually adjust your device's display settings to prevent it from turning off.
+
+I’ve also started developing an Android app to overcome most of these HTTP limitations, but it’s not ready for release just yet.
+
 ## TFT_eSPI_config 
 
 There is a config This file is required only if you plan to build the ESP32 firmware yourself. It configures the TFT screen for the ESP32 C3 Super Mini and must be copied into the TFT_eSPI library folder. 

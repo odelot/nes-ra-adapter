@@ -16,17 +16,18 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2025-03-29
-   Version:          0.1
+   Date:             2025-04-24
+   Version:          0.3
    By odelot
 
-   Arduino IDE ESP32 Boards: v3.0.5
-   
+   Arduino IDE ESP32 Boards: v3.0.7
+
    Libs used:
    WifiManager: https://github.com/tzapu/WiFiManager v2.0.17
-   ArduinoJson: https://github.com/bblanchon/ArduinoJson v7.3.0
-   PNGdec: https://github.com/bitbank2/PNGdec v1.0.3
+   PNGdec: https://github.com/bitbank2/PNGdec v1.1.2
    TFT_eSPI lib: https://github.com/Bodmer/TFT_eSPI v2.5.43
+   ESP Async WebServer: https://github.com/ESP32Async/ESPAsyncWebServer v.3.7.6
+   Async TCP: https://github.com/ESP32Async/AsyncTCP v3.4.0
 
    Compiled with Arduino IDE 2.3.4
 
@@ -47,7 +48,6 @@
 
 #include <WiFiManager.h>
 #include <EEPROM.h>
-#include <ArduinoJson.h>
 #include <PNGdec.h>
 #include <StreamString.h>
 #include <WiFi.h>
@@ -58,9 +58,13 @@
 #include "HardwareSerial.h"
 #include "LittleFS.h"
 #include <esp_sleep.h>
+#include <esp_system.h>
 #include <driver/uart.h>
-#include <driver/adc.h>
+#include <ESPmDNS.h>
+#include <ESPAsyncWebServer.h>
 #include <Wire.h>
+
+#define VERSION "0.3"
 
 /**
  * defines for the LittleFS
@@ -141,6 +145,29 @@
 #define ENABLE_SHRINK_LAMBDA 0 // 0 - disable / 1 - enable
 #define SHRINK_LAMBDA_URL "https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/default/NES_RA_ADAPTER?"
 
+/**
+ * EXPERIMENTAL - enable internal web app (uncomment to enable)
+ */
+
+#define ENABLE_INTERNAL_WEB_APP_SUPPORT
+
+// types for http request
+typedef enum HttpRequestMethod
+{
+  GET = 0,
+  POST = 1
+};
+
+typedef enum HttpRequestResult
+{
+  HTTP_SUCCESS = 0,
+  HTTP_ERR_NO_WIFI = -1,
+  HTTP_ERR_REQUEST_FAILED = -2,
+  HTTP_ERR_HTTP_4XX = -3,
+  HTTP_ERR_TIMEOUT = -4,
+  HTTP_ERR_REPONSE_TOO_BIG = -5,
+};
+
 // type to store the achievements to be showed on screen
 typedef struct
 {
@@ -167,52 +194,26 @@ File png_file;
 // global variables for the TFT screen
 TFT_eSPI tft = TFT_eSPI();
 
-// global variables for the network
-NetworkClientSecure client;
-HTTPClient https;
-
-// global variables for the json parser
-StaticJsonDocument<512> json_doc;
-
-// global variables for the "achievement unlocked" sound
-int snd_notes_achievement_unlocked[] = {
-    NOTE_D5, NOTE_D5, NOTE_CS6, NOTE_D6};
-
-int snd_velocity_achievement_unlocked[] = {
-    52,
-    37,
-    83,
-    74,
-};
-
-int snd_notes_duration_achievement_unlocked[] = {
-    2,
-    4,
-    3,
-    12,
-};
-
 // global variables for the achievements fifo
 achievements_FIFO_t achievements_fifo;
 
-// global variable for the wifi manager
-WiFiManager wm;
-
 // custom html and parameters for the configuration portal
-const char head[] = "<style>#l,#i,#z{text-align:center}#i,#z{margin:15px auto}button{background-color:#0000FF;}#l{margin:0 auto;width:100%; font-size: 28px;}p{margin-bottom:-5px}[type='checkbox']{height: 20px;width: 20px;}</style><script>var w=window,d=document,e=\"password\";function iB(a,b,c){a.insertBefore(b,c)}function gE(a){return d.getElementById(a)}function cE(a){return d.createElement(a)};\"http://192.168.1.1/\"==w.location.href&&(w.location.href+=\"wifi\");</script>\0";
-const char html_p1[] = "<p id='z' style='width: 80%;'>Enter the RetroAchievements credentials below:</p>\0";
-const char html_p2[] = "<p>&#8226; RetroAchievements user name: </p>\0";
-const char html_p3[] = "<p>&#8226; RetroAchievements user password: </p>\0";
-const char html_s[] = "<script>gE(\"s\").required=!0;l=cE(\"div\");l.innerHTML=\"NES RetroAchievements Adapter\",l.id=\"l\";m=d.body.childNodes[0];iB(m,l,m.childNodes[0]);p=cE(\"p\");p.id=\"i\",p.innerHTML=\"Choose the network you want to connect with:\",iB(m,p,m.childNodes[1]);</script>\0";
-WiFiManagerParameter custom_p1(html_p1);
-WiFiManagerParameter custom_p2(html_p2);
-WiFiManagerParameter custom_param_1("un", NULL, "", 24, " required autocomplete='off'");
-WiFiManagerParameter custom_p3(html_p3);
-WiFiManagerParameter custom_param_2("up", NULL, "", 14, " type='password' required");
-WiFiManagerParameter custom_s(html_s);
+const char head[] PROGMEM = "<style>#l,#i,#z{text-align:center}#i,#z{margin:15px auto}button{background-color:#0000FF;}#l{margin:0 auto;width:100%; font-size: 28px;}p{margin-bottom:-5px}[type='checkbox']{height: 20px;width: 20px;}</style><script>var w=window,d=document,e=\"password\";function iB(a,b,c){a.insertBefore(b,c)}function gE(a){return d.getElementById(a)}function cE(a){return d.createElement(a)};\"http://192.168.1.1/\"==w.location.href&&(w.location.href+=\"wifi\");</script>\0";
+const char html_p1[] PROGMEM = "<p id='z' style='width: 80%;'>Enter the RetroAchievements credentials below:</p>\0";
+const char html_p2[] PROGMEM = "<p>&#8226; RetroAchievements user name: </p>\0";
+const char html_p3[] PROGMEM = "<p>&#8226; RetroAchievements user password: </p>\0";
+const char html_s[] PROGMEM = "<script>gE(\"s\").required=!0;l=cE(\"div\");l.innerHTML=\"NES RetroAchievements Adapter\",l.id=\"l\";m=d.body.childNodes[0];iB(m,l,m.childNodes[0]);p=cE(\"p\");p.id=\"i\",p.innerHTML=\"Choose the network you want to connect with:\",iB(m,p,m.childNodes[1]);</script>\0";
+
+// ws variables
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+uint32_t last_ws_cleanup = millis();
+AsyncWebSocketClient *ws_client = NULL;
+#endif
 
 // global variables for the state machine
-int state = 255; // TODO: change to enum
+uint8_t state = 255; // TODO: change to enum
 
 // global variables for storing states, timestamps and useful information
 String base_url = "https://retroachievements.org/dorequest.php?";
@@ -220,7 +221,9 @@ String ra_user_token = "";
 StreamString buffer;
 String md5 = "";
 String game_name = "not identified";
+String game_image = "";
 String game_id = "0";
+String game_session;
 bool go_back_to_title_screen = false;
 bool already_showed_title_screen = false;
 long go_back_to_title_screen_timestamp;
@@ -234,7 +237,8 @@ long go_back_to_title_screen_timestamp;
 // otherwise it look for the crc from the last bank
 String get_MD5(String crc, bool first_bank)
 {
-  if (crc == "BD7BC39F") { // CRC from regions filled with 0xFF - normally the last bank - useless to identify the cartridge
+  if (crc == "BD7BC39F")
+  {                                                 // CRC from regions filled with 0xFF - normally the last bank - useless to identify the cartridge
     Serial.println("CRC is 0xBD7BC39F - skipping"); // debug
     return "";
   }
@@ -256,14 +260,14 @@ String get_MD5(String crc, bool first_bank)
   crc1.reserve(10);
   crc2.reserve(10);
   md5.reserve(33);
-  
+
   while (file.available())
   {
     line.clear();
     crc1.clear();
     crc2.clear();
     md5.clear();
-    line += file.readStringUntil('\n'); 
+    line += file.readStringUntil('\n');
     int index_after_comma = line.indexOf(',');
     int index_after_equal_sign = line.indexOf('=');
 
@@ -419,6 +423,140 @@ void clean_json_field_str_value(String &json, const String &field_to_remove)
   json.remove(write_index);
 }
 
+// remove achievements with flags 5 (unofficial) from the json string
+void remove_achievements_with_flags_5(String &json)
+{
+  remove_space_new_lines_in_json(json);
+  int achvStart = json.indexOf("\"Achievements\":[");
+  if (achvStart == -1)
+    return;
+
+  int arrayStart = json.indexOf('[', achvStart);
+  int arrayEnd = json.indexOf(']', arrayStart);
+  if (arrayStart == -1 || arrayEnd == -1)
+    return;
+
+  int pos = arrayStart + 1;
+  while (pos < arrayEnd)
+  {
+    int objStart = json.indexOf('{', pos);
+    if (objStart == -1 || objStart > arrayEnd)
+      break;
+
+    int objEnd = objStart;
+    int braces = 1;
+    while (braces > 0 && objEnd < arrayEnd)
+    {
+      objEnd++;
+      if (json.charAt(objEnd) == '{')
+        braces++;
+      else if (json.charAt(objEnd) == '}')
+        braces--;
+    }
+
+    if (objEnd >= arrayEnd)
+      break;
+
+    int flagsPos = json.indexOf("\"Flags\":5", objStart);
+    if (flagsPos != -1 && flagsPos < objEnd)
+    {
+      // Verifica se tem vírgula antes do objeto
+      int removeStart = objStart;
+      while (removeStart > arrayStart && isspace(json.charAt(removeStart - 1)))
+        removeStart--;
+      if (json.charAt(removeStart - 1) == ',')
+        removeStart--;
+
+      json.remove(removeStart, objEnd - removeStart + 1);
+      arrayEnd = json.indexOf(']', arrayStart); // atualiza nova posição do fim do array
+      pos = removeStart;                        // recomeça do ponto anterior
+    }
+    else
+    {
+      pos = objEnd + 1;
+    }
+  }
+}
+
+// remove achievements with MemAddr longer than size from the json string
+// used just if needed
+void remove_achievements_with_long_MemAddr(String &json, uint32_t size)
+{
+  int achievementsPos = json.indexOf("\"Achievements\"");
+  if (achievementsPos == -1)
+    return;
+
+  int arrayStart = json.indexOf('[', achievementsPos);
+  int arrayEnd = json.indexOf(']', arrayStart);
+  if (arrayStart == -1 || arrayEnd == -1)
+    return;
+
+  int pos = arrayStart + 1;
+  while (pos < arrayEnd)
+  {
+    int objStart = json.indexOf('{', pos);
+    if (objStart == -1 || objStart >= arrayEnd)
+      break;
+
+    int objEnd = objStart;
+    int braceCount = 1;
+    while (braceCount > 0 && objEnd + 1 < json.length())
+    {
+      objEnd++;
+      if (json[objEnd] == '{')
+        braceCount++;
+      else if (json[objEnd] == '}')
+        braceCount--;
+    }
+
+    if (objEnd >= arrayEnd)
+      break;
+
+    // Procura o campo "MemAddr"
+    int memAddrPos = json.indexOf("\"MemAddr\"", objStart);
+    if (memAddrPos == -1 || memAddrPos > objEnd)
+    {
+      pos = objEnd + 1;
+      continue;
+    }
+
+    int valueStart = json.indexOf('"', memAddrPos + 9);
+    if (valueStart == -1 || valueStart > objEnd)
+    {
+      pos = objEnd + 1;
+      continue;
+    }
+
+    int valueEnd = json.indexOf('"', valueStart + 1);
+    if (valueEnd == -1 || valueEnd > objEnd)
+    {
+      pos = objEnd + 1;
+      continue;
+    }
+
+    int length = valueEnd - valueStart - 1;
+    if (length > size)
+    {
+
+      int removeStart = objStart;
+      int removeEnd = objEnd + 1;
+
+      if (json[removeEnd] == ',')
+        removeEnd++;
+      else if (removeStart > arrayStart + 1 && json[removeStart - 1] == ',')
+        removeStart--;
+
+      json.remove(removeStart, removeEnd - removeStart);
+      arrayEnd -= (removeEnd - removeStart);
+      pos = removeStart;
+    }
+    else
+    {
+      pos = objEnd + 1;
+    }
+  }
+}
+
 // transform a array field from the json into a empty array
 void clean_json_field_array_value(String &json, const String &field_to_remove)
 {
@@ -436,15 +574,17 @@ void clean_json_field_array_value(String &json, const String &field_to_remove)
     if (c == '[')
     {
       inside_array = true;
-      if (remove_next_array) {
+      if (remove_next_array)
+      {
         skip_field = true;
         json[write_index++] = '[';
       }
-    } 
+    }
     if (c == ']')
     {
       inside_array = false;
-      if (remove_next_array) {
+      if (remove_next_array)
+      {
         remove_next_array = false;
         skip_field = false;
       }
@@ -454,7 +594,7 @@ void clean_json_field_array_value(String &json, const String &field_to_remove)
     {
       if (json[read_index - 1] != '\\')
       {
-        inside_quotes = !inside_quotes;        
+        inside_quotes = !inside_quotes;
       }
     }
 
@@ -621,6 +761,22 @@ void play_error_sound()
 // play a sound to indicate an achievement unlocked
 void play_sound_achievement_unlocked()
 {
+  int snd_notes_achievement_unlocked[] = {
+      NOTE_D5, NOTE_D5, NOTE_CS6, NOTE_D6};
+
+  int snd_velocity_achievement_unlocked[] = {
+      52,
+      37,
+      83,
+      74,
+  };
+
+  int snd_notes_duration_achievement_unlocked[] = {
+      2,
+      4,
+      3,
+      12,
+  };
   for (int this_note = 0; this_note < 4; this_note++)
   {
     int note_duration = snd_notes_duration_achievement_unlocked[this_note] * 16;
@@ -708,8 +864,15 @@ void show_title_screen()
   setCpuFrequencyMhz(80);
 }
 
+// show the achievement screen
 void show_achievement(achievements_t achievement)
 {
+  char aux[256];
+  sprintf(aux, "A=%s;%s;%s", "0", achievement.title.c_str(), achievement.url.c_str());
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+  send_ws_data(aux);
+#endif
+
   setCpuFrequencyMhz(160);
   tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
   print_line("New Achievement Unlocked!", 0, 0);
@@ -722,7 +885,7 @@ void show_achievement(achievements_t achievement)
   y_pos = 110;
   char file_name[64];
   sprintf(file_name, "/achievement_%d.png", achievement.id);
-  download_file_to_littleFS(achievement.url, file_name);
+  try_download_file(achievement.url, file_name);
   int16_t rc = png.open(file_name, png_open, png_close, png_read, png_seek, png_draw);
   if (rc == PNG_SUCCESS)
   {
@@ -826,21 +989,37 @@ String read_ra_pass_from_eeprom()
  * functions related to the wifi manager
  */
 
-void wifi_manager_init()
+void wifi_manager_init(WiFiManager &wm)
 {
+  // wm.setDebugOutput(true);
+  wm.setHostname("nes-ra-adapter");
   wm.setBreakAfterConfig(true);
   wm.setCaptivePortalEnable(true);
   wm.setMinimumSignalQuality(40);
   wm.setConnectTimeout(30);
-  wm.addParameter(&custom_p1);
-  wm.addParameter(&custom_p2);
-  wm.addParameter(&custom_param_1);
-  wm.addParameter(&custom_p3);
-  wm.addParameter(&custom_param_2);
-  wm.addParameter(&custom_s);
   wm.setCustomHeadElement(head);
   wm.setDarkMode(true);
   wm.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
+}
+
+// remove Arduino JSON and save some RAM
+String extractToken(String &json)
+{
+  String key = "\"Token\":";
+  int start = json.indexOf(key);
+  if (start == -1)
+    return "";
+
+  // Avança até o início do valor (pula o ':', espaços e aspas)
+  start = json.indexOf("\"", start + key.length());
+  if (start == -1)
+    return "";
+
+  int end = json.indexOf("\"", start + 1);
+  if (end == -1)
+    return "";
+
+  return json.substring(start + 1, end);
 }
 
 /**
@@ -848,54 +1027,25 @@ void wifi_manager_init()
  */
 String try_login_RA(String ra_user, String ra_pass)
 {
-  DeserializationError error;
-  int http_code;
-  client.setInsecure();
   String login_path = "r=login&u=@USER@&p=@PASS@";
   login_path.replace("@USER@", ra_user);
   login_path.replace("@PASS@", ra_pass);
-  https.begin(client, base_url + login_path);
 
-  const char *header_keys[] = {"date"};
-  const size_t header_keys_count = sizeof(header_keys) / sizeof(header_keys[0]); // Returns 1
-  https.collectHeaders(header_keys, header_keys_count);
-
-  http_code = https.GET();
-  // TODO: use this timestamp to control temp files on littleFS
-  String date_header = https.header("date");
-  Serial.println("Header Date: " + date_header); // debug
-
-  if (http_code != HTTP_CODE_OK)
+  StreamString response;
+  response.reserve(256);
+  int ret = perform_http_request(base_url + login_path, GET, login_path, response, true, 3, 5000, 500);
+  if (ret < 0)
   {
+    Serial.print("request error: ");
+    Serial.println(http_request_result_to_string(ret));
     state = 253; // error - login failed
     Serial0.print("ERROR=253-LOGIN_FAILED\r\n");
     Serial.print("ERROR=253-LOGIN_FAILED\r\n");
     return String("null");
   }
-  
-  StreamString response;
-  response.reserve(256);
-  int ret = https.writeToStream(&response);
-  if (ret < 0)
-  {
-    //TODO: handle error
-    Serial.print("ERROR ON RESPONSE: ");
-    Serial.println(ret);
-  }
 
-  https.end();
+  String ra_token = extractToken(response);
 
-  error = deserializeJson(json_doc, (String) response);
-
-  if (error)
-  {
-    state = 252; // error - json parse login failed
-    Serial0.print("ERROR=252-JSON_PARSE_ERROR\r\n");
-    Serial.print("ERROR=252-JSON_PARSE_ERROR\r\n");
-    return String("null");
-  }
-
-  String ra_token(json_doc["Token"]);
   return ra_token;
 }
 
@@ -933,24 +1083,53 @@ void handle_reset()
  * functions related to the littleFS
  */
 
+// retry download a file up to 3 times with exponential backoff
+int try_download_file(String url, String file_name)
+{
+  int attempt = 0;
+  int maxRetries = 3;
+  int retryDelayMs = 250;
+  while (attempt < maxRetries)
+  {
+    int ret = download_file_to_littleFS(url, file_name);
+    if (ret == 0)
+    {
+      return 0; // File downloaded successfully
+    }
+    else
+    {
+      Serial.printf("Attempt %d failed. Retrying...\n", attempt + 1);
+    }
+    attempt++;
+    if (attempt <= maxRetries)
+    {
+      delay(retryDelayMs * pow(2, attempt)); // Exponential backoff
+    }
+  }
+  return -1;
+}
+
 // Fetch a file from the URL given and save it in LittleFS
 // Return 1 if a web fetch was needed or 0 if file already exists
-bool download_file_to_littleFS(String url, String file_name)
+int download_file_to_littleFS(String url, String file_name)
 {
-
+  int ret = 0;
   // If it exists then no need to fetch it
   if (LittleFS.exists(file_name) == true)
   {
     Serial.print("Found " + file_name + " in LittleFS\n"); // debug
-    return 0;
+    return ret;
   }
+
+  // before use LittleFS, check if we have enough space and delete files if necessary
+  check_free_space_littleFS();
 
   Serial.print("Downloading " + file_name + " from " + url + "\n"); // debug
 
   // Check WiFi connection
   if ((WiFi.status() == WL_CONNECTED))
   {
-
+    NetworkClientSecure client;
     HTTPClient http;
     client.setInsecure();
     http.begin(client, url);
@@ -963,7 +1142,7 @@ bool download_file_to_littleFS(String url, String file_name)
       if (!f)
       {
         Serial.print("file open failed\n"); // debug
-        return 0;
+        return -1;
       }
 
       // File found at server
@@ -1008,11 +1187,11 @@ bool download_file_to_littleFS(String url, String file_name)
     else
     {
       Serial.printf("download failed, error: %s\n", http.errorToString(http_code).c_str()); // debug
-      // TODO: handle error, maybe retry
+      ret = -1;
     }
     http.end();
   }
-  return 1;
+  return ret;
 }
 
 // auxiliary function to implement startsWith for char*
@@ -1021,22 +1200,353 @@ bool prefix(const char *pre, const char *str)
   return strncmp(pre, str, strlen(pre)) == 0;
 }
 
+// monitor wifi events - connection
+void onWiFiConnect(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  Serial.println(F("WiFi connected."));
+}
+
+// monitor wifi events - disconnection
+void onWiFiDisconnect(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  Serial.println(F("WiFi disconnected."));
+  WiFi.reconnect();
+}
+
+// monitor wifi events - got IP address
+void onWiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+  Serial.print(F("Got IP: "));
+  Serial.println(IPAddress(info.got_ip.ip_info.ip.addr));
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+  config_mDNS();
+#endif
+}
+
+// calculate how much free space we have on littleFS in percentage
+float get_free_space_littleFS()
+{
+  float free_space = (float)LittleFS.totalBytes() - (float)LittleFS.usedBytes();
+  free_space = (free_space / (float)LittleFS.totalBytes()) * 100.0;
+  // Serial.print("Total Bytes: "); //debug
+  // Serial.println(LittleFS.totalBytes()); //debug
+  // Serial.print("Used Bytes: "); //debug
+  // Serial.println(LittleFS.usedBytes()); //debug
+  Serial.print("Free space: ");
+  Serial.print(free_space);
+  Serial.println("%");
+  return free_space;
+}
+
+// remove all images from littleFS
+void remove_all_image_files_littleFS()
+{
+  fs::File root = LittleFS.open("/");
+  fs::File file = root.openNextFile();
+  while (file)
+  {
+    String file_name = file.name();
+    file.close();
+    if (prefix("achievement_", file_name.c_str()) || prefix("title_", file_name.c_str()))
+    {
+      Serial.print("Removing " + file_name + "\n"); // debug
+      file_name = "/" + file_name;
+      LittleFS.remove(file_name);
+    }
+    file = root.openNextFile();
+  }
+}
+
+// remove all files if we are running out of space
+void check_free_space_littleFS()
+{
+  float free_space = get_free_space_littleFS();
+  if (free_space < 3) // each image uses ~0.5%
+  {
+    Serial.print("Free space is less than 3%, removing all image files\n"); // debug
+    remove_all_image_files_littleFS();
+  }
+}
+
+/**
+ * functions related with mDNS, websocket and the experimental internal web app
+ */
+
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+
+// configure mDNS
+void config_mDNS()
+{
+  String mdnsName = "nes-ra-adapter";
+
+  MDNS.end();
+  if (!MDNS.begin(mdnsName.c_str()))
+  {
+    Serial.println("error - begin mDNS");
+    return;
+  }
+
+  Serial.print("mDNS init: ");
+  Serial.println(mdnsName + ".local");
+
+  MDNS.addService("nraa", "tcp", 80);
+  Serial.println("service mDNS announced");
+}
+
+// handle websocket events
+void on_websocket_event(AsyncWebSocket *server, AsyncWebSocketClient *client,
+                        AwsEventType type, void *arg, uint8_t *data, size_t len)
+{
+
+  if (type == WS_EVT_CONNECT)
+  {
+    // just one simultaneous connection for the time being
+    Serial.println("new ws connection");
+    if (ws_client != NULL)
+    {
+      Serial.println("closing last connection");
+      ws_client->close();
+    }
+    ws_client = client;
+    client->setCloseClientOnQueueFull(false);
+    client->ping();
+  }
+  else if (type == WS_EVT_PONG)
+  {
+    Serial.println("ws pong");
+    if (game_id != "0") // we have a game running
+    {
+      // send the game name and image to the client
+      char aux[512];
+      sprintf(aux, "G=%s;%s;%s;%s", game_session.c_str(), game_id.c_str(), game_name.c_str(), game_image.c_str());
+      client->text(aux);
+    }
+  }
+  else if (type == WS_EVT_DISCONNECT)
+  {
+    Serial.println("ws disconnect");
+    if (ws_client != NULL)
+    {
+      ws_client->close();
+      ws_client == NULL;
+    }
+  }
+  else if (type == WS_EVT_DATA)
+  {
+    data[len] = 0; // garante terminação
+    if (strcmp((char *)data, "ping") == 0)
+    {
+      Serial.println("ws ping");
+      client->text("pong");
+    }
+  }
+}
+
+// send websocket data
+void send_ws_data(String data)
+{
+  if (ws_client != NULL)
+  {
+    ws_client->text(data);
+  }
+}
+
+// initialize the websocket server
+void init_websocket()
+{
+
+  // ws begin
+  ws.onEvent(on_websocket_event);
+  // Servir arquivos estáticos (HTML, CSS, JS)
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+
+  server.serveStatic("/sw.js", LittleFS, "/sw.js")
+      .setCacheControl("no-cache, no-store, must-revalidate");
+  server.serveStatic("/index.html", LittleFS, "/index.html")
+      .setCacheControl("no-cache, no-store, must-revalidate");
+
+  server.serveStatic("/snd.mp3", LittleFS, "/snd.mp3")
+      .setCacheControl("max-age=86400");
+
+  server.addHandler(&ws);
+  server.begin();
+
+  // // prevent a second WS client to connect - i am not sure if it is really needed since I disconnect the old one before conneceting the new one
+  // server.addHandler(&ws).addMiddleware([](AsyncWebServerRequest *request, ArMiddlewareNext next)
+  // {
+  //   // ws.count() is the current count of WS clients: this one is trying to upgrade its HTTP connection
+  //   if (ws.count() > 0) {
+  //     // if we have 1 clients prevent the next one to connect
+  //     request->send(503, "text/plain", "Server is busy");
+  //   } else {
+  //     // process next middleware and at the end the handler
+  //     next();
+  //   }
+  // });
+}
+#endif
+
+/**
+ * functions related to the HTTP requests, retry, error handling, etc
+ */
+
+// HTTP request result codes to string
+String http_request_result_to_string(int code)
+{
+  switch (code)
+  {
+  case HTTP_SUCCESS:
+    return "HTTP_SUCCESS";
+  case HTTP_ERR_NO_WIFI:
+    return "HTTP_ERR_NO_WIFI";
+  case HTTP_ERR_REQUEST_FAILED:
+    return "HTTP_ERR_REQUEST_FAILED";
+  case HTTP_ERR_HTTP_4XX:
+    return "HTTP_ERR_HTTP_4XX";
+  case HTTP_ERR_TIMEOUT:
+    return "HTTP_ERR_TIMEOUT";
+  case HTTP_ERR_REPONSE_TOO_BIG:
+    return "HTTP_ERR_REPONSE_TOO_BIG";
+  default:
+    return "UNKNOWN_ERROR";
+  }
+}
+
+// perform an HTTP request with retries and exponential backoff
+int perform_http_request(
+    const String &url,
+    HttpRequestMethod method,
+    const String &payload,
+    StreamString &response,
+    bool isIdempotent,
+    int maxRetries,
+    int timeoutMs,
+    int retryDelayMs)
+{
+  int attempt = 0;
+  int wifiRetries = 3;
+  int code = HTTP_ERR_REQUEST_FAILED;
+
+  while (attempt <= maxRetries)
+  {
+    if (attempt != 0)
+    {
+      Serial.println("Attemp " + String(attempt) + " to request");
+    }
+    int wifiAttempt = 0;
+    while (WiFi.status() != WL_CONNECTED && wifiAttempt < wifiRetries)
+    {
+      delay(500);
+      wifiAttempt++;
+    }
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      code = HTTP_ERR_NO_WIFI;
+      delay(retryDelayMs * pow(2, attempt)); // Backoff mesmo para WiFi
+      attempt++;
+      continue;
+    }
+    NetworkClientSecure client;
+    client.setInsecure(); // Disable SSL certificate verification
+    HTTPClient https;
+    https.setTimeout(timeoutMs);
+    https.begin(client, url);
+    if (method == GET)
+    {
+      code = https.GET();
+    }
+    else
+    { // POST
+      https.addHeader("Content-Type", "application/x-www-form-urlencoded");
+      code = https.POST(payload);
+    }
+
+    if (code > 0)
+    {
+      if (code >= 200 && code < 300)
+      {
+        int ret = https.writeToStream(&response);
+        if (ret < 0)
+        {
+          Serial.print(F("ERROR ON RESPONSE: "));
+          Serial.println(ret);
+          https.end();
+          return HTTP_ERR_REPONSE_TOO_BIG;
+        }
+        https.end();
+        return HTTP_SUCCESS;
+      }
+      else if (code >= 400 && code < 500)
+      {
+        https.end();
+        return HTTP_ERR_HTTP_4XX;
+      }
+      else
+      {
+        // Erros 5xx ou outros
+        https.end();
+        if (!isIdempotent && method == HTTP_POST)
+        {
+          return HTTP_ERR_REQUEST_FAILED;
+        }
+      }
+    }
+    else
+    {
+      // Timeout, falha de conexão, etc
+      if (code == HTTPC_ERROR_CONNECTION_REFUSED ||
+          code == HTTPC_ERROR_READ_TIMEOUT ||
+          code == HTTPC_ERROR_CONNECTION_LOST)
+      {
+        code = HTTP_ERR_TIMEOUT;
+      }
+      else
+      {
+        code = HTTP_ERR_REQUEST_FAILED;
+      }
+    }
+
+    attempt++;
+    if (attempt <= maxRetries)
+    {
+      delay(retryDelayMs * pow(2, attempt)); // Exponential backoff
+    }
+  }
+
+  return code;
+}
+
 // arduino-esp32 entry point
 void setup()
 {
   setCpuFrequencyMhz(80);
   // disable i2c
   Wire.end();
- 
+  // BLEDevice::deinit(true);
+
   // config analog switch control pin
   pinMode(ANALOG_SWITCH_PIN, OUTPUT);
   digitalWrite(ANALOG_SWITCH_PIN, ANALOG_SWITCH_DISABLE_BUS); // isolate the cartridge from NES
+
+  Serial.begin(9600);    // initialize the serial port
+  Serial0.setTimeout(2); // 2ms timeout for Serial0
+  Serial0.begin(115200);
+  // consume any garbage in the serial buffer before communicating with the pico
+  if (Serial0.available() > 0)
+  {
+    Serial0.readString();
+    delay(10);
+  }
+
+  // hard reset the pico
+  Serial0.print("RESET\r\n");
 
   // config reset pin
   pinMode(RESET_PIN, INPUT);
 
   // reserve a buffer for the streamstring
-  buffer.reserve(512);
+  buffer.reserve(256);
   buffer.clear();
 
   // initialize stuff
@@ -1044,15 +1554,9 @@ void setup()
 
   fifo_init(&achievements_fifo); // initialize the achievement fifo
 
-  wifi_manager_init(); // initialize the wifi manager
-
   tft.begin(); // initialize the TFT screen
 
-  Serial.begin(9600);    // initialize the serial port
-  Serial0.setTimeout(2); // 2ms timeout for Serial0
-  Serial0.begin(115200);
-  delay(250);
-
+  // delay(250);
   if (!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)) // Initialise LittleFS
   {
     Serial.print("LittleFS initialisation failed!"); // debug
@@ -1060,18 +1564,11 @@ void setup()
       yield(); // Stay here twiddling thumbs waiting
   }
 
-  // consume any garbage in the serial buffer before communicating with the pico
-  if (Serial0.available() > 0)
-  {
-    Serial0.readString();
-    delay (10);
-  }
+  char esp_version[32];
+  sprintf(esp_version, "ESP32_VERSION=%s\r\n", VERSION);
+  Serial0.print(esp_version); // send the version to the pico - debug
 
-  Serial0.print("ESP32_VERSION=0.2\r\n"); // send the version to the pico - debug
-  Serial0.print("RESET\r\n");             // reset the pico
-  delay(250);
-
-  // draw the title screen
+  //  draw the title screen
   tft.fillScreen(TFT_YELLOW);
   tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
 
@@ -1096,6 +1593,20 @@ void setup()
   bool configured = is_eeprom_configured();
   if (!configured)
   {
+    WiFiManager wm;
+    WiFiManagerParameter custom_p1(html_p1);
+    WiFiManagerParameter custom_p2(html_p2);
+    WiFiManagerParameter custom_param_1("un", NULL, "", 24, " required autocomplete='off'");
+    WiFiManagerParameter custom_p3(html_p3);
+    WiFiManagerParameter custom_param_2("up", NULL, "", 14, " type='password' required");
+    WiFiManagerParameter custom_s(html_s);
+    wifi_manager_init(wm); // initialize the wifi manager
+    wm.addParameter(&custom_p1);
+    wm.addParameter(&custom_p2);
+    wm.addParameter(&custom_param_1);
+    wm.addParameter(&custom_p3);
+    wm.addParameter(&custom_param_2);
+    wm.addParameter(&custom_s);
     while (!configured)
     {
       if (wifi_configuration_tries == 0 && !wifi_configured)
@@ -1136,18 +1647,18 @@ void setup()
         {
           print_line("Logged in RA!", 1, 0);
           play_success_sound();
-          Serial.println("saving configuration info in eeprom");
+          Serial.println(F("saving configuration info in eeprom"));
           save_configuration_info_eeprom(temp_ra_user, temp_ra_pass);
         }
         else
         {
-          Serial.print("could not log in RA");
+          Serial.print(F("could not log in RA"));
           clean_screen_text();
         }
       }
       else
       {
-        Serial.print("not connected...booo :(");
+        Serial.print(F("not connected...booo :("));
         clean_screen_text();
         wifi_configuration_tries += 1;
       }
@@ -1163,7 +1674,7 @@ void setup()
     {
       WiFi.begin();
       while (WiFi.status() != WL_CONNECTED)
-        delay (500);
+        delay(500);
     }
     print_line("Wifi OK!", 0, 0); // TODO: implement timeout
     String ra_user = read_ra_user_from_eeprom();
@@ -1183,33 +1694,47 @@ void setup()
     }
   }
 
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+  config_mDNS();
+#endif
+
+  // handle reconnects
+  WiFi.onEvent(onWiFiConnect, ARDUINO_EVENT_WIFI_STA_CONNECTED);
+  WiFi.onEvent(onWiFiDisconnect, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent(onWiFiGotIP, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+
   // send the token and user to the pico (needed )
   char token_and_user[512];
   sprintf(token_and_user, "TOKEN_AND_USER=%s,%s\r\n", ra_user_token.c_str(), read_ra_user_from_eeprom().c_str());
-  Serial0.print(token_and_user);
 
+  delay(250);                   // make sure pico restarted
   Serial.print(token_and_user); // debug
-  Serial.print("TFT_INIT\r\n"); // debug
-  delay(250);
+  Serial0.print(token_and_user);
+  Serial.print(F("TFT_INIT\r\n")); // debug
   state = 0;
-  Serial.print("setup end"); // debug
 
   // modem sleep
   WiFi.setSleep(true);
   esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+  // esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 
+  Serial.print(F("setup end")); // debug
 }
 
 // arduino-esp32 main loop
 void loop()
 {
-  // reconnect if wifi got disconnected
-  if (WiFi.status() != WL_CONNECTED)
+
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+  uint32_t delta_ws_cleanup = millis() - last_ws_cleanup;
+  last_ws_cleanup = millis();
+  if (delta_ws_cleanup > 1000)
   {
-    WiFi.begin();
-    while (WiFi.status() != WL_CONNECTED)
-      yield();
+    ws.cleanupClients();
   }
+
+  // #TODO last ping was too long ago, closes the connection
+#endif
 
   long go_back_to_title_delta_timestamp = millis() - go_back_to_title_screen_timestamp;
   // check if we can go back to the title screen after showing the achievement for 15 seconds
@@ -1232,6 +1757,16 @@ void loop()
     play_error_sound();
   }
 
+  if (state == 198)
+  {
+    // connectivity error - no wifi or no result from the server after some retries
+    state = 128; // do nothing - it will not enable the BUS, so the game will not boot
+    print_line("Connectivity Error", 1, 2);
+    print_line("It is not recording achievements", 2, 2);
+    print_line("Turn off the console", 4, 2);
+    play_error_sound();
+  }
+
   if (state == 199)
   {
     // json is too big
@@ -1246,8 +1781,8 @@ void loop()
   {
     print_line("Identifying cartridge...", 1, 1);
 
-    Serial0.print("READ_CRC\r\n"); // send command to read cartridge crc
-    Serial.print("READ_CRC\r\n");  // send command to read cartridge crc
+    Serial0.print(F("READ_CRC\r\n")); // send command to read cartridge crc
+    Serial.print(F("READ_CRC\r\n"));  // send command to read cartridge crc
     delay(250);
     state = 1;
 
@@ -1259,8 +1794,8 @@ void loop()
   // inform the pico to start the process to watch the BUS for memory writes
   if (state == 2)
   {
-    Serial0.print("START_WATCH\r\n");
-    Serial.print("START_WATCH\r\n");
+    Serial0.print(F("START_WATCH\r\n"));
+    Serial.print(F("START_WATCH\r\n"));
     state = 3;
   }
 
@@ -1279,8 +1814,8 @@ void loop()
     if (buffer.length() > 2048) // max command size from pico - 2048 bytes
     {
       buffer.clear();
-      Serial0.print("BUFFER_OVERFLOW\r\n");
-      Serial.print("BUFFER_OVERFLOW\r\n");
+      Serial0.print(F("BUFFER_OVERFLOW\r\n"));
+      Serial.print(F("BUFFER_OVERFLOW\r\n"));
     }
 
     // wait for a command terminator \r\n
@@ -1288,23 +1823,24 @@ void loop()
     {
       // we have a command \o/
       String command = buffer.substring(0, buffer.indexOf("\n") + 1);
-      buffer.remove(0,buffer.indexOf("\n") + 1); // shift string left, removing the command from the buffer
-      
+      buffer.remove(0, buffer.indexOf("\n") + 1); // shift string left, removing the command from the buffer
+
       // handle a http request command
       if (command.startsWith("REQ"))
       {
         // example of request
         // REQ=FF;M:POST;U:https://retroachievements.org/dorequest.php;D:r=login2&u=user&p=pass
-        const char user_agent[] = "NES_RA_ADAPTER/0.2 rcheevos/11.6";
+        const char user_agent[] = "NES_RA_ADAPTER/0.3 rcheevos/11.6";
 
-        String request = command.substring(4);
-        // Serial.println("REQ=" + request);
+        StreamString request;
+        request.reserve(command.length());
+        request += command.substring(4);
         int pos = request.indexOf(";");
         String request_id = request.substring(0, pos);
-        request = request.substring(pos + 1);
+        request.remove(0, pos + 1);
         pos = request.indexOf(";");
         String method = request.substring(2, pos);
-        request = request.substring(pos + 1);
+        request.remove(0, pos + 1);
         pos = request.indexOf(";");
         String url = request.substring(2, pos);
         String data = request.substring(pos + 3);
@@ -1319,53 +1855,45 @@ void loop()
           url = SHRINK_LAMBDA_URL;
         }
 
-        client.setInsecure();
-        https.begin(client, url);
-        https.setUserAgent(user_agent);
-
-        if (method == "POST")
-        {
-          https.addHeader("Content-Type", "application/x-www-form-urlencoded");
-          http_code = https.POST(data);
-        }
-        else if (method == "GET")
-        {
-          http_code = https.GET();
-        }
-        if (http_code != HTTP_CODE_OK)
-        {
-          // TODO: handle errors
-          Serial0.print("REQ_ERROR=" + String(http_code) + "\r\n");
-          Serial.print("REQ_ERROR=" + https.errorToString(http_code) + "\r\n");
-        }
-        char http_code_str[4];
-        sprintf(http_code_str, "%03X", http_code);
-        // String response = https.getString();
-
         int reserve;
-        if (prefix("r=patch", data.c_str())) {
-          reserve = 61000; // bold - need more tests, but at least supports Super Mario Bros 3
-          if (ENABLE_SHRINK_LAMBDA) {
-            reserve = 32768; 
+        if (prefix("r=patch", data.c_str()))
+        {
+          // because of this amount of RAM we can only enable the websocket after get the achievement list
+          reserve = 65250; // bold - need more tests, but at least supports Final Fantasy for now - could allocate 65500 in tests
+          if (ENABLE_SHRINK_LAMBDA)
+          {
+            reserve = 32768;
           }
-        } else {
+        }
+        else
+        {
           reserve = 512;
         }
-        
+
         StreamString response;
         // reserve 32KB of memory for the response
-        if (!response.reserve(reserve)) {
-          Serial.print ("could not allocate: ");
-          Serial.print (reserve);
-          Serial.println (" KB");
+        if (!response.reserve(reserve))
+        {
+          Serial.print(F("could not allocate: "));
+          Serial.print(reserve);
+          Serial.println(F(" KB"));
           state = 199; // json to big error
-        } else {
-          int ret = https.writeToStream(&response);
+        }
+        else
+        {
+          int ret = perform_http_request(base_url, POST, data, response, true, 3, 5000, 500);
           if (ret < 0)
           {
-            Serial.print("ERROR ON RESPONSE: ");
-            Serial.println(ret);
-            state = 199; // json to big error
+            Serial.print(F("ERROR ON RESPONSE: "));
+            Serial.println(http_request_result_to_string(ret));
+            if (ret == HTTP_ERR_REPONSE_TOO_BIG)
+            {
+              state = 199; // json to big error
+            }
+            else
+            {
+              state = 198; // connectivity error
+            }
           }
           else
           {
@@ -1374,7 +1902,7 @@ void loop()
             {
               // print response size and header content size
 
-              Serial.print("PATCH LENGTH: ");    // debug
+              Serial.print(F("PATCH LENGTH: ")); // debug
               Serial.println(response.length()); // debug
               clean_json_field_str_value(response, "Description");
               remove_json_field(response, "Warning");
@@ -1386,8 +1914,25 @@ void loop()
               remove_json_field(response, "Author");
               remove_json_field(response, "RichPresencePatch");
               clean_json_field_array_value(response, "Leaderboards");
-              Serial.print("NEW PATCH LENGTH: "); // debug
-              // Serial.println(response.length());  // debug
+              remove_achievements_with_flags_5(response);
+              if (response.length() > SERIAL_MAX_PICO_BUFFER)
+              {
+                Serial.println(F("removing achievements with MemAddr > 4KB"));
+                remove_achievements_with_long_MemAddr(response, 4096);
+              }
+              if (response.length() > SERIAL_MAX_PICO_BUFFER)
+              {
+                Serial.println(F("removing achievements with MemAddr > 2KB"));
+                remove_achievements_with_long_MemAddr(response, 2048);
+              }
+              if (response.length() > SERIAL_MAX_PICO_BUFFER)
+              {
+                Serial.println(F("removing achievements with MemAddr > 1KB"));
+                remove_achievements_with_long_MemAddr(response, 1024);
+              }
+              Serial.println(response);
+              Serial.print(F("NEW PATCH LENGTH: ")); // debug
+              Serial.println(response.length());     // debug
             }
             else if (prefix("r=login", data.c_str()))
             {
@@ -1395,56 +1940,40 @@ void loop()
             }
           }
         }
-        if (state != 199 && response.length() < SERIAL_MAX_PICO_BUFFER) {
-          Serial0.print("RESP=");
-            Serial0.print(request_id);
-            Serial0.print(";");
-            Serial0.print(http_code_str);
-            Serial0.print(";");
-
-            // send the response to the pico in chunks
-            const char *ptr = response.c_str();
-            uint32_t len = response.length();
-            uint32_t offset = 0;
-
-            while (offset < len)
-            {
-              uint32_t chunk_len = min((uint32_t)SERIAL_COMM_CHUNK_SIZE, (uint32_t)(len - offset));
-              Serial0.write((const uint8_t *)&ptr[offset], chunk_len);
-              Serial0.flush();
-              offset += chunk_len;
-              delay(SERIAL_COMM_TX_DELAY_MS); // delay to avoid buffer overflow
-            }
-            Serial0.print("\r\n");
-            https.end();
-
-            // for debug purposes
-            Serial.print("RESP=");
-            Serial.print(request_id);
-            Serial.print(";");
-            Serial.print(http_code_str);
-            Serial.print(";");
-            Serial.print(response);
-            Serial.print("\r\n");
-        } else {
-          state = 199;
-        }                
-      }
-      // controls analog switch - useful for debugging send commands via Serial Monitor
-      else if (command.startsWith("ANALOG_SWITCH="))
-      {
+        if (state < 198 && response.length() < SERIAL_MAX_PICO_BUFFER)
         {
-          int analog_switch_command = command.substring(4).toInt();
-          if (analog_switch_command == 1)
+          Serial0.print("RESP=");
+          Serial0.print(request_id);
+          Serial0.print(";");
+          Serial0.print("200");
+          Serial0.print(";");
+
+          // send the response to the pico in chunks
+          const char *ptr = response.c_str();
+          uint32_t len = response.length();
+          uint32_t offset = 0;
+
+          while (offset < len)
           {
-            digitalWrite(ANALOG_SWITCH_PIN, ANALOG_SWITCH_ENABLE_BUS);
+            uint32_t chunk_len = min((uint32_t)SERIAL_COMM_CHUNK_SIZE, (uint32_t)(len - offset));
+            Serial0.write((const uint8_t *)&ptr[offset], chunk_len);
+            Serial0.flush();
+            offset += chunk_len;
+            delay(SERIAL_COMM_TX_DELAY_MS); // delay to avoid buffer overflow
           }
-          else
-          {
-            digitalWrite(ANALOG_SWITCH_PIN, ANALOG_SWITCH_DISABLE_BUS);
-          }
-          Serial0.print("ANALOG_SWITCH_SET\r\n");
-          Serial.print("ANALOG_SWITCH_SET\r\n");
+          Serial0.print("\r\n");
+          // for debug purposes
+          Serial.print(F("RESP="));
+          Serial.print(request_id);
+          Serial.print(F(";"));
+          // Serial.print(http_code_str);
+          // Serial.print(F(";"));
+          // Serial.print(response);
+          Serial.print(F("\r\n"));
+        }
+        else
+        {
+          state = 199;
         }
       }
       // handle the pico response with the cartridge CRCs
@@ -1452,8 +1981,8 @@ void loop()
       {
         if (state != 1)
         {
-          Serial0.print("COMMAND_IGNORED_WRONG_STATE\r\n");
-          Serial.print("COMMAND_IGNORED_WRONG_STATE\r\n");
+          Serial0.print(F("COMMAND_IGNORED_WRONG_STATE\r\n"));
+          Serial.print(F("COMMAND_IGNORED_WRONG_STATE\r\n"));
         }
         else
         {
@@ -1474,8 +2003,8 @@ void loop()
           }
           if (md5.length() == 0)
           {
-            Serial0.print("CRC_NOT_FOUND\r\n");
-            Serial.print("CRC_NOT_FOUND\r\n");
+            Serial0.print(F("CRC_NOT_FOUND\r\n"));
+            Serial.print(F("CRC_NOT_FOUND\r\n"));
             state = 254; // error - cartridge not found
           }
           else
@@ -1512,11 +2041,11 @@ void loop()
         achievement.url = achievements_image;
         if (fifo_enqueue(&achievements_fifo, achievement) == false)
         {
-          Serial.print("FIFO_FULL\r\n"); // debug
+          Serial.print(F("FIFO_FULL\r\n")); // debug
         }
         else
         {
-          Serial.print("ACHIEVEMENT_ADDED\r\n"); // debug
+          Serial.print(F("ACHIEVEMENT_ADDED\r\n")); // debug
         }
       }
       // handle command with the game info
@@ -1529,7 +2058,7 @@ void loop()
         pos = command.indexOf(";");
         game_name = command.substring(0, pos);
         command = command.substring(pos + 1);
-        String game_image = command;
+        game_image = command;
         game_image.trim();
 
         if (game_id == "0")
@@ -1540,16 +2069,19 @@ void loop()
         {
           char file_name[64];
           sprintf(file_name, "/title_%s.png", game_id.c_str());
-          download_file_to_littleFS(game_image.c_str(), file_name);
+          try_download_file(game_image, file_name);
+          // get just the file name from the url
+          game_image = game_image.substring(game_image.lastIndexOf("/") + 1, game_image.length());
 
           // if game name is longer than 18 chars, add ... at the end
-          if (game_name.length() > 18)
+          String esp_game_name = game_name;
+          if (esp_game_name.length() > 18)
           {
-            game_name = game_name.substring(0, 18 - 3) + "...";
+            esp_game_name = esp_game_name.substring(0, 18 - 3) + "...";
           }
 
           print_line("Cartridge identified:", 1, 0);
-          print_line(" * " + game_name + " * ", 2, 0);
+          print_line(" * " + esp_game_name + " * ", 2, 0);
           print_line("please RESET the console", 4, 0);
           Serial.print(command);
           // enable the BUS, connection NES to the cartridge
@@ -1561,15 +2093,39 @@ void loop()
       // by itself once the BUS is connected)
       else if (command.startsWith("NES_RESETED"))
       {
+        uint8_t random = (uint8_t)esp_random();
+        game_session = random;
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+        init_websocket();
+        char aux[512];
+        send_ws_data("RESET");
+        sprintf(aux, "G=%s;%s;%s;%s", game_session.c_str(), game_id.c_str(), game_name.c_str(), game_image.c_str());
+        if (ws_client)
+        {
+          ws_client->text(aux);
+        }
+#endif
 
         show_title_screen();
         // TODO: play some sound?
         state = 128; // do nothing
       }
+      else if (command.startsWith("C="))
+      {
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+        send_ws_data(command);
+#endif
+      }
+      else if (command.startsWith("P="))
+      {
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+        send_ws_data(command);
+#endif
+      }
       // command unknown
       else
       {
-        Serial.print("UNKNOWN=");
+        Serial.print(F("UNKNOWN="));
         Serial.print(command);
       }
     }

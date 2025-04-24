@@ -33,7 +33,7 @@ This guide explains how to set up **Arduino IDE (version 2.3.4)** to compile and
 2. **Install ESP32 board support in Arduino IDE**  
    - Open **Arduino IDE**  
    - Go to **Tools** → **Board** → **Board Manager**  
-   - Search for **esp32** and install the version `v3.0.5` of **ESP32 by Espressif Systems**  
+   - Search for **esp32** and install the version `v3.0.7` of **ESP32 by Espressif Systems**  
    - Once installed, select **ESP32C3 Dev Module** under **Tools** → **Board**  
 
 3. **Install the required libraries**  
@@ -41,9 +41,10 @@ This guide explains how to set up **Arduino IDE (version 2.3.4)** to compile and
    The project uses the following libraries, which you can install via the **Library Manager** or manually from GitHub:  
 
    - **WiFiManager** (v2.0.17) → [https://github.com/tzapu/WiFiManager](https://github.com/tzapu/WiFiManager)  
-   - **ArduinoJson** (v7.3.0) → [https://github.com/bblanchon/ArduinoJson](https://github.com/bblanchon/ArduinoJson)  
-   - **PNGdec** (v1.0.3) → [https://github.com/bitbank2/PNGdec](https://github.com/bitbank2/PNGdec)  
+   - **PNGdec** (v1.1.2) → [https://github.com/bitbank2/PNGdec](https://github.com/bitbank2/PNGdec)  
    - **TFT_eSPI** (v2.5.43) → [https://github.com/Bodmer/TFT_eSPI](https://github.com/Bodmer/TFT_eSPI)
+   - **ESP Async WebServer** (v.3.7.6) -> [https://github.com/ESP32Async/ESPAsyncWebServer](https://github.com/ESP32Async/ESPAsyncWebServer)
+   - **Async TCP** (v3.4.0) -> [https://github.com/ESP32Async/AsyncTCP](https://github.com/ESP32Async/AsyncTCP)
 
    **To install via Library Manager:**  
    - Open **Tools** → **Library Manager**  
@@ -67,7 +68,7 @@ Before compiling, adjust the settings in Arduino IDE:
 2. Configure the following options:  
 
    - **USB CDC On Boot**: Enabled
-   - **CPU Frequency**: 80MHz (WiFi)   
+   - **CPU Frequency**: 80MHz (WiFi)
    - **Core Debug Level**: None  
    - **Erase All Flash Before Sketch Upload**: Disabled  
    - **Flash Size**: 4MB (32Mb)  
