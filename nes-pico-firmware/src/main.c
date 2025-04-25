@@ -126,6 +126,12 @@
 #define UART_TX_PIN 28 // GPIO pin for TX
 #define UART_RX_PIN 29 // GPIO pin for RX
 
+/**
+ * EXPERIMENTAL - enable internal web app (uncomment to enable)
+ */
+
+// #define ENABLE_INTERNAL_WEB_APP_SUPPORT
+
 const uint16_t NES_D[8] = {NES_D0, NES_D1, NES_D2, NES_D3, NES_D4, NES_D5, NES_D6, NES_D7};
 const uint16_t NES_A[15] = {NES_A00, NES_A01, NES_A02, NES_A03, NES_A04, NES_A05, NES_A06, NES_A07, NES_A08, NES_A09, NES_A10, NES_A11, NES_A12, NES_A13, NES_A14};
 const uint16_t NES_F[3] = {NES_ROMSEL, NES_M2, NES_RW};
@@ -1071,13 +1077,15 @@ static void event_handler(const rc_client_event_t *event, rc_client_t *client)
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
         achievement_triggered(event->achievement);
         break;
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT        
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
     case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
     case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
         achievement_status(event);
-        break;    
+        break;
+#endif
     default:
         printf("Unhandled event %d\n", event->type);
         break;
