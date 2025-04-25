@@ -1649,6 +1649,7 @@ void setup()
           play_success_sound();
           Serial.println(F("saving configuration info in eeprom"));
           save_configuration_info_eeprom(temp_ra_user, temp_ra_pass);
+          ESP.restart(); // just to play safe as we are using all the RAM we can get to receive the achievement list
         }
         else
         {
@@ -1762,7 +1763,7 @@ void loop()
     // connectivity error - no wifi or no result from the server after some retries
     state = 128; // do nothing - it will not enable the BUS, so the game will not boot
     print_line("Connectivity Error", 1, 2);
-    print_line("It is not recording achievements", 2, 2);
+    print_line("It's not recording achievs", 2, 2);
     print_line("Turn off the console", 4, 2);
     play_error_sound();
   }
@@ -1970,10 +1971,6 @@ void loop()
           // Serial.print(F(";"));
           // Serial.print(response);
           Serial.print(F("\r\n"));
-        }
-        else
-        {
-          state = 199;
         }
       }
       // handle the pico response with the cartridge CRCs
