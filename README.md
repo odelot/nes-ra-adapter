@@ -9,8 +9,6 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
   </a>
 </p>
 
--> -> -> **One month duration (April) Donation campaign to help the project ([campaign page](https://github.com/odelot/nes-ra-adapter-donation-campaign))** <- <- <-
-
 ---
 
 ## Table of Contents
@@ -174,7 +172,44 @@ Everyone is welcome to contribute!
 
 ## FAQ
 
-The FAQ will be available [here](https://github.com/odelot/nes-ra-adapter-donation-campaign/tree/main?tab=readme-ov-file#faq) during the donation campaign.
+- **Q: Are you planning to sell the adapter?**
+- **A**: No. This is a fully open-source, community-driven DIY project.
+<br/>
+
+- **Q: So how can I get one?**
+- **A**: It's a DIY project — you can build it yourself!
+If you're not comfortable doing that, don’t worry: as seen with other open-source projects like the [GBSControl](https://github.com/ramapcsx2/gbs-control), [GB Interceptor](https://github.com/Staacks/gbinterceptor) and [Open Source Cartridge Reader](https://github.com/sanni/cartreader), the community often steps in to produce and sell units for those who don’t want to build their own.
+<br/>
+
+- **Q: Am I allowed to manufacture and sell it?**
+- **A**: Yes! Both the hardware and software licenses allow commercial use.
+Please note that the 3D-printed case files were created using Fusion 360 under a non-commercial license, but they can be redesigned in other software for commercial purposes.
+<br/>
+
+- **Q: Do I need to open my NES to use it?**
+- **A**: Our goal is for it to work like a Game Genie — a plug-and-play adapter that fits between the console and the cartridge, with no need to open the NES. However, current prototypes still require opening the console.
+<br/>
+
+- **Q: Do I need to modify my NES in any way?**
+- **A**: No. The adapter is plug-and-play and doesn’t require any console modification.
+<br/>
+
+- **Q: Do I need to connect it to a computer?**
+- **A**: No! It’s fully self-contained with built-in Wi-Fi.
+If you ever need to configure it, you can do so from your smartphone. All achievement processing is handled onboard.
+<br/>
+
+- **Q: Will the adapter work with EverDrives?**
+- **A**: The adapter needs to read the cartridge to identify the game, but when using an EverDrive, it reads the EverDrive’s firmware instead of the game itself. That’s one of the reasons why supporting EverDrives is not currently possible.
+<br/>
+
+- **Q: Will it work with Japanese Famicom systems?**
+- **A**: We haven’t tested with original Japanese consoles yet, but it should work with 72-to-60 pin adapters. Many Japanese games are already mapped on RetroAchievements, and we’ve successfully tested some using a 60-to-72 adapter.
+<br/>
+
+- **Q: Will it work with the Disk System?**
+- **A**: We haven’t tested with the Disk System since we don’t have one. It’s a possible future enhancement if we can get the hardware for testing.
+<br/>
 
 ---
 
@@ -182,6 +217,43 @@ The FAQ will be available [here](https://github.com/odelot/nes-ra-adapter-donati
 
 - Thanks to **RetroAchievements** and its community for providing achievements for nearly all games and making the system available to everyone.
 - Thanks to **NESDEV** for detailed NES documentation and a welcoming forum.
+- People that helped us during the donation campaing (April/25) - **THANK-YOU**:
+  - Aaron P.
+  - Stupid C. G.
+  - Elaine B.
+  - I F. S.
+  - Ken G.
+  - Kaffe S.
+  - Jonathan
+  - Sharon L.
+  - Daniel P.
+  - Ricardo S. S.
+  - Fabio H. A. F.
+  - Anuar N.
+  - Bryan D. S.
+  - Giovanni M. C.
+  - Paulo H. A. S.
+  - Fernando G. S.
+  - Rafael B. M.
+  - Thiago G. O.
+  - Jerome V. V.
+  - Ricardo V. A. M.
+  - Tiago T.
+  - Leonardo P. K.
+  - Fábio S.
+  - Anderson A. B.
+  - Rubens M. P.
+  - Silvio L.
+  - Carlos R. S.
+  - Ademar S. J.
+  - Marcel A. B. C.
+  - Peterson F. I.
+  - Denis D. F. F.
+  - Luis A. S.
+  - Ariovaldo P.
+  - Theo M. O. C. P.
+  - Thiago P. L.
+  - André R.
 
 ## Similar Projects
 
