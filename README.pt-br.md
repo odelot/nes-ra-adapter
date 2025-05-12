@@ -9,8 +9,6 @@ Repositório do projeto **NES RetroAchievements Adapter** – uma iniciativa mak
   </a>
 </p>
 
--> -> -> **Campanha de doação com duração de um mês (abril) para ajudar o projeto ([pagina da campanha](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md))** <- <- <-
-
 ---
 
 ## Índice
@@ -166,7 +164,45 @@ Todos estão convidados a colaborar com o projeto!
 
 ## FAQ
 
-O FAQ estará disponível [aqui](https://github.com/odelot/nes-ra-adapter-donation-campaign/blob/main/README.pt-br.md#faq---perguntas-frequentes) durante a campanha de doação.
+- **P: Vocês pretendem vender o adaptador?**
+- **R**: Não. Nosso projeto é uma iniciativa DIY 100% open-source para a comunidade.
+<br/>
+
+- **P: Como posso conseguir o adaptador?**
+- **R**: É um projeto DIY – você mesmo pode construí-lo!
+Se você não se sente confortável em fazê-lo sozinho, lembre-se de que, assim como outros projetos open-source (como [GBSControl](https://github.com/ramapcsx2/gbs-control), [GB Interceptor](https://github.com/Staacks/gbinterceptor) e [Open Source Cartridge Reader](https://github.com/sanni/cartreader)), a própria comunidade pode se organizar para fabricar e comercializar o adaptador.
+<br/>
+
+- **P: Posso fabricar e vender o adaptador?**
+- **R**: Sim! As licenças de software e hardware permitem o uso comercial. Vale notar que os cases 3D foram projetados no Fusion 360 para fins não lucrativos, mas podem ser remodelados futuramente para uso comercial em outros softwares.
+<br/>
+
+- **P: Preciso abrir meu NES para usar o adaptador?**
+- **R**: Nossa meta é que o adaptador seja plug-and-play, semelhante ao Game Genie, encaixando-se no slot de cartuchos sem necessidade de abrir o console. Entretanto, os protótipos atuais exigem que o NES seja aberto para instalação.
+<br/>
+
+- **P: Preciso modificar meu NES para utilizar o adaptador?**
+- **R**: Não, ele é plug-and-play e não requer modificações.
+<br/>
+
+- **P: O adaptador precisa estar conectado a um computador?**
+- **R**: Não! Ele é autossuficiente, contando com conectividade Wi-Fi integrada. A configuração pode ser feita via smartphone, e todo o processamento dos achievements é realizado internamente.
+<br/>
+
+- **P: O adaptador funcionará com everdrives?**
+- **R**: O adaptador precisa ler o cartucho para identifica-lo e, quando usado com everdrive, ele lê o firmware do everdrive e não o jogo. Essa é uma das razões para ser possivel suportar everdrive.
+<br/>
+
+- **P: O adaptador funcionará com modelos japoneses?**
+- **R**: Ainda não testamos com adaptadores japoneses, mas os primeiros resultados indicam compatibilidade com adaptadores de 72 para 60 pinos. Jogos japoneses já fazem parte do mapeamento do RetroAchievements e já tivemos sucesso em testes com adaptações similares.
+<br/>
+
+- **P: O adaptador funcionará com Disk System?**
+- **R**: Não testamos com Disk System, pois não dispomos desse hardware. Essa funcionalidade pode ser explorada futuramente, assim que conseguirmos o conjunto necessário para testes.
+<br/>
+
+- **P: O adaptador funciona com os famiclones brasileiros?**
+- **R**: Nosso protótipo atual possui um slot fêmea compatível com o NES americano (NES-001). A versão miniaturizada terá um conector macho que poderá ser adaptado para uso com o NES-001, NES-101 (top loader) e possivelmente outros consoles, incluindo famiclones, por meio de adaptadores
 
 ---
 
@@ -182,7 +218,43 @@ O FAQ estará disponível [aqui](https://github.com/odelot/nes-ra-adapter-donati
 
 - Agradecemos ao **RetroAchievements** e a toda a sua comunidade por criar conquistas para quase todos os jogos e disponibilizar o sistema para todos. [https://retroachievements.org/](https://retroachievements.org/)
 - Agradecemos também ao **NESDEV** por documentar o NES com detalhes incríveis e pelo fórum acolhedor. [https://nesdev.org/](https://nesdev.org/)
-
+- Galera que nos ajudou durante a campanha de doação em Abril de 2025 - **Muito Obrigado**:
+  - Daniel P.
+  - Ricardo S. S.
+  - Fabio H. A. F.
+  - Anuar N.
+  - Bryan D. S.
+  - Giovanni M. C.
+  - Paulo H. A. S.
+  - Fernando G. S.
+  - Rafael B. M.
+  - Thiago G. O.
+  - Jerome V. V.
+  - Ricardo V. A. M.
+  - Tiago T.
+  - Leonardo P. K.
+  - Fábio S.
+  - Anderson A. B.
+  - Rubens M. P.
+  - Silvio L.
+  - Carlos R. S.
+  - Ademar S. J.
+  - Marcel A. B. C.
+  - Peterson F. I.
+  - Denis D. F. F.
+  - Luis A. S.
+  - Ariovaldo P.
+  - Theo M. O. C. P.
+  - Thiago P. L.
+  - André R.
+  - Aaron P.
+  - Stupid C. G.
+  - Elaine B.
+  - I F. S.
+  - Ken G.
+  - Kaffe S.
+  - Jonathan
+  - Sharon L.
 
 ## Projetos Semelhantes
 
