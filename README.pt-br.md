@@ -148,6 +148,7 @@ Atualizar o case (atualmente inspirado no Game Genie) para se adequar ao novo fo
 
 ## Histórico de Versões
 
+- **Versão 0.4 (2025-05-15)** – Firmware do Pico mais estável quando ligada a funcionalidade experimental de espelhamento da tela no smartphone. Além disso, um app Android foi disponibilizado (APK, na sessão de release) para auxiliar no uso da nova funcionalidade. 
 - **Versão 0.3 (2025-04-24)** – Melhorias no tratamento de erros, otimização do uso de RAM e implementação de uma funcionalidade experimental para transmitir o conteúdo da telinha LCD para um smartphone.
 - **Versão 0.2 (2025-04-07)** – Otimizações para redução do consumo energético. 
 - **Versão 0.1 (2025-03-28)** – Versão inicial do protótipo.

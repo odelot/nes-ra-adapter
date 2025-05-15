@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2025-04-24
-   Version:          0.3
+   Date:             2025-05-15
+   Version:          0.4
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -149,7 +149,7 @@
  * EXPERIMENTAL - enable internal web app (uncomment to enable)
  */
 
-#define ENABLE_INTERNAL_WEB_APP_SUPPORT
+// #define ENABLE_INTERNAL_WEB_APP_SUPPORT
 
 // types for http request
 typedef enum HttpRequestMethod

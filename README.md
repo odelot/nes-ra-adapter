@@ -147,6 +147,7 @@ Update the case (currently inspired by the Game Genie) to fit the new circuit la
 
 ## Version History
 
+- **Version 0.4 (2025-05-15)** - Make the experimental mirror screen feature more stable on pico firmaware. Releases an Android App (APK - release section) to help on the usage of the mirror screen feature.
 - **Version 0.3 (2025-04-24)** – Improve error handling, optimize ram usage, deployed an experimental feature to stream the content of the tiny LCD to a smartphone
 - **Version 0.2 (2025-04-07)** – Optimizations to reduce energy consumption.
 - **Version 0.1 (2025-03-28)** – Initial prototype version.

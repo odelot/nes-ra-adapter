@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-04-24
-   Version:          0.3
+   Date:             2025-05-15
+   Version:          0.4
    By odelot
 
    Libs used:
@@ -82,7 +82,7 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "0.3"
+#define FIRMWARE_VERSION "0.4"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -227,7 +227,7 @@ u_char *serial_buffer_head = serial_buffer;
  * Used to send data from Core 1 to Core 0
  */
 
-#define MEMORY_BUFFER_SIZE 4096 // maybe we can decrease it to 2048 - games like FF that uses a lot of addresses reached ~500 
+#define MEMORY_BUFFER_SIZE 4096 // maybe we can decrease it to 2048 - games like FF that uses a lot of addresses reached ~500
 volatile int memory_head = 0;
 volatile int memory_tail = 0;
 volatile int memory_max = 0;
@@ -298,11 +298,18 @@ uint8_t request_id = 0; // last request id used - used to identify the response 
  * but we will send them one by one to the ESP32 to be shown on the screen
  */
 
-#define FIFO_SIZE 5
+#define FIFO_SIZE 15
 
 typedef struct
 {
-    uint32_t buffer[FIFO_SIZE];
+    uint32_t id;
+    u_int8_t event;
+    char measured_progress[24];
+} achievement_t;
+
+typedef struct
+{
+    achievement_t buffer[FIFO_SIZE];
     int head;
     int tail;
     int count;
@@ -646,7 +653,7 @@ void handle_bus_to_detect_memory_writes()
     read_A = true;
     reading_A = false;
     reading_B = false;
-    
+
     // handle DMA ping-pong and process the buffer that is not being feed
     while (1)
     {
@@ -815,7 +822,7 @@ bool fifo_is_full(FIFO_t *fifo)
     return fifo->count == FIFO_SIZE;
 }
 
-bool fifo_enqueue(FIFO_t *fifo, uint32_t value)
+bool fifo_enqueue(FIFO_t *fifo, achievement_t value)
 {
     if (fifo_is_full(fifo))
     {
@@ -827,7 +834,7 @@ bool fifo_enqueue(FIFO_t *fifo, uint32_t value)
     return true;
 }
 
-bool fifo_dequeue(FIFO_t *fifo, uint32_t *value)
+bool fifo_dequeue(FIFO_t *fifo, achievement_t *value)
 {
     if (fifo_is_empty(fifo))
     {
@@ -837,18 +844,6 @@ bool fifo_dequeue(FIFO_t *fifo, uint32_t *value)
     fifo->head = (fifo->head + 1) % FIFO_SIZE;
     fifo->count--;
     return true;
-}
-
-void fifo_print(FIFO_t *fifo)
-{
-    printf("FIFO: ");
-    int index = fifo->head;
-    for (int i = 0; i < fifo->count; i++)
-    {
-        printf("%u ", fifo->buffer[index]);
-        index = (index + 1) % FIFO_SIZE;
-    }
-    printf("\n");
 }
 
 /**
@@ -1019,54 +1014,32 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
 // enqueue the achievements the user won to be sent to the ESP32
 static void achievement_triggered(const rc_client_achievement_t *achievement)
 {
-    fifo_enqueue(&achievements_fifo, achievement->id);
+    achievement_t achievement_data;
+    achievement_data.id = achievement->id;
+    achievement_data.event = RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED;
+    fifo_enqueue(&achievements_fifo, achievement_data);
 }
 
 // send the achievements status to the ESP32
 static void achievement_status(const rc_client_event_t *event)
 {
-    if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW 
-        || event->type == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW
-        || event->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE)
+    achievement_t achievement_data;
+    achievement_data.id = 0;
+    achievement_data.event = event->type;
+    if (event->achievement)
     {
-        char aux[256];
-        char url[128];  
-        char command[3];
-        if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW) {
-            sprintf(command, "C=");
-        } else {
-            sprintf(command, "P=");
+        achievement_data.id = event->achievement->id;
+        if (event->achievement->measured_progress)
+        {
+            strcpy(achievement_data.measured_progress, event->achievement->measured_progress);
         }
-        const rc_client_achievement_t *achievement = event->achievement;
-          
-        rc_client_achievement_get_image_url(achievement, event->type, url, sizeof(url));
-        sprintf(aux, "%sS;%u;%s;%s;%s\r\n", command, (unsigned int)achievement->id, achievement->title, url, achievement->measured_progress);
-        printf(aux);
-        uart_puts(UART_ID, aux);
-
-    } else
-    if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE)
-    {
-        unsigned int id = 0;
-        if (event->achievement) {
-            id = event->achievement->id;            
+        else
+        {
+            strcpy(achievement_data.measured_progress, "0");
         }
-        char aux[128];
-        sprintf(aux, "P=H;%u\r\n", id);
-        printf(aux);
-        uart_puts(UART_ID, aux);
-    } else
-    if (event->type == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE)
-    {
-        unsigned int id = 0;
-        if (event->achievement) {
-            id = event->achievement->id;
-        }
-        char aux[128];
-        sprintf(aux, "C=H;%u\r\n", id);
-        printf(aux);
-        uart_puts(UART_ID, aux);
     }
+
+    fifo_enqueue(&achievements_fifo, achievement_data);   
 }
 
 // rcheevos event handler - used to enqueue the achievements the user won to be sent to the ESP32
@@ -1077,7 +1050,7 @@ static void event_handler(const rc_client_event_t *event, rc_client_t *client)
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
         achievement_triggered(event->achievement);
         break;
-#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT        
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
     case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
@@ -1248,17 +1221,57 @@ int main()
         // if there is no request on the fly and there is an achievement to be sent, go for it
         if (request_ongoing == 0 && fifo_is_empty(&achievements_fifo) == false)
         {
+            achievement_t achievement_data;
             uint32_t achievement_id;
-            fifo_dequeue(&achievements_fifo, &achievement_id);
-            const rc_client_achievement_t *achievement = rc_client_get_achievement_info(g_client, achievement_id);
-            char url[128];
-            const char *title = achievement->title;
-            rc_client_achievement_get_image_url(achievement, RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED, url, sizeof(url));
-            char aux[512];
-            memset(aux, 0, 512);
-            sprintf(aux, "A=%lu;%s;%s\r\n", (unsigned long)achievement_id, title, url);
-            uart_puts(UART_ID, aux);
-            printf(aux);
+            fifo_dequeue(&achievements_fifo, &achievement_data);
+            achievement_id = achievement_data.id;
+            if (achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED)
+            {
+                // send the achievement to the ESP32
+                const rc_client_achievement_t *achievement = rc_client_get_achievement_info(g_client, achievement_id);
+                char url[128];
+                const char *title = achievement->title;
+                rc_client_achievement_get_image_url(achievement, RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED, url, sizeof(url));
+                char aux[512];
+                memset(aux, 0, 512);
+                sprintf(aux, "A=%lu;%s;%s\r\n", (unsigned long)achievement_id, title, url);
+                uart_puts(UART_ID, aux);
+                printf(aux);
+            }
+            else if (achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW || achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW || achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE)
+            {
+                char aux[256];
+                char url[128];
+                char command[3];
+                if (achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW)
+                {
+                    sprintf(command, "C=");
+                }
+                else
+                {
+                    sprintf(command, "P=");
+                }
+                const rc_client_achievement_t *achievement = rc_client_get_achievement_info(g_client, achievement_id);
+
+                rc_client_achievement_get_image_url(achievement, achievement_data.event, url, sizeof(url));
+                sprintf(aux, "%sS;%u;%s;%s;%s\r\n", command, (unsigned int)achievement->id, achievement->title, url, achievement->measured_progress);
+                printf(aux);
+                uart_puts(UART_ID, aux);
+            }
+            else if (achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE)
+            {
+                char aux[128];
+                sprintf(aux, "P=H;%u\r\n", achievement_id);
+                printf(aux);
+                uart_puts(UART_ID, aux);
+            }
+            else if (achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE)
+            {
+                char aux[128];
+                sprintf(aux, "C=H;%u\r\n", achievement_id);
+                printf(aux);
+                uart_puts(UART_ID, aux);
+            }
         }
 
         if (state == 1)
