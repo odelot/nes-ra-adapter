@@ -1615,7 +1615,7 @@ void setup()
         print_line("Connect to its wifi network", 1, -1, -16);
         print_line("named \"NES_RA_ADAPTER\",", 2, -1, -16);
         print_line("password: 12345678, and ", 3, -1, -16);
-        print_line("then open http://192.186.1.1", 4, -1, -16);
+        print_line("then open http://192.168.1.1", 4, -1, -16);
         play_attention_sound();
       }
       else if (wifi_configuration_tries > 0 && !wifi_configured)
@@ -1831,7 +1831,7 @@ void loop()
       {
         // example of request
         // REQ=FF;M:POST;U:https://retroachievements.org/dorequest.php;D:r=login2&u=user&p=pass
-        const char user_agent[] = "NES_RA_ADAPTER/0.3 rcheevos/11.6";
+        const char user_agent[] = "NES_RA_ADAPTER/0.4 rcheevos/11.6";
 
         StreamString request;
         request.reserve(command.length());
@@ -1882,7 +1882,7 @@ void loop()
         }
         else
         {
-          int ret = perform_http_request(base_url, POST, data, response, true, 3, 5000, 500);
+          int ret = perform_http_request(url, POST, data, response, true, 3, 5000, 500);
           if (ret < 0)
           {
             Serial.print(F("ERROR ON RESPONSE: "));
