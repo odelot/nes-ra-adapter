@@ -151,7 +151,7 @@
 #define TFT_CS   -1 
 #define TFT_DC   1  // Data Command control pin
 #define TFT_RST  0  // Reset pin (could connect to NodeMCU RST, see next line)
-#define TFT_MISO 5
+#define TFT_MISO 9
 #define USE_FSPI_PORT
 
 //#define TFT_RST  -1  // Set TFT_RST to -1 if the display RESET is connected to NodeMCU RST or 3.3V

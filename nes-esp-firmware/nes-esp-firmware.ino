@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2025-05-15
-   Version:          0.4
+   Date:             2025-06-24
+   Version:          0.5
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -63,8 +63,9 @@
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <Wire.h>
+#include <Ticker.h>
 
-#define VERSION "0.3"
+#define VERSION "0.5"
 
 /**
  * defines for the LittleFS
@@ -104,6 +105,17 @@
 #define MAX_IMAGE_WIDTH 240
 
 /**
+ * defines for the LCD
+ */
+#define LCD_BRIGHTNESS_PIN 7
+
+/**
+ * defines for status led
+ */
+#define LED_STATUS_RED_PIN 6
+#define LED_STATUS_GREEN_PIN 5
+
+/**
  * defines for the buzzer
  */
 
@@ -138,7 +150,7 @@
 #define ENABLE_RESET 1
 
 /**
- * defines to use a lambda function to shrink  the JSON response with the list of achievements
+ * defines to use a aws lambda function to shrink the JSON response with the list of achievements
  * remember: you need to deploy the lambda and inform its URL
  */
 
@@ -149,7 +161,7 @@
  * EXPERIMENTAL - enable internal web app (uncomment to enable)
  */
 
-// #define ENABLE_INTERNAL_WEB_APP_SUPPORT
+//#define ENABLE_INTERNAL_WEB_APP_SUPPORT
 
 // types for http request
 typedef enum HttpRequestMethod
@@ -184,6 +196,33 @@ typedef struct
   int tail;
   int count;
 } achievements_FIFO_t;
+
+// types for LED control
+
+enum LedMode {
+  LED_OFF,
+  LED_ON,
+  LED_BLINK_SLOW,
+  LED_BLINK_MEDIUM,
+  LED_BLINK_FAST
+};
+
+enum LedColor {
+  LED_RED,
+  LED_GREEN,
+  LED_YELLOW  
+};
+
+struct Led {
+  uint8_t pin;
+  LedMode mode;
+  bool state; // HIGH ou LOW atual
+  Ticker ticker;
+};
+
+// global variables for LED control
+Led ledRed   = {LED_STATUS_RED_PIN, LED_OFF, false, Ticker()};
+Led ledGreen = {LED_STATUS_GREEN_PIN, LED_OFF, false, Ticker()};
 
 // global variables for the PNG decoder
 PNG png;
@@ -227,6 +266,72 @@ String game_session;
 bool go_back_to_title_screen = false;
 bool already_showed_title_screen = false;
 long go_back_to_title_screen_timestamp;
+
+/**
+ * functions related to LED status and control
+ */
+
+// function called by the ticker to update the LED state
+void updateLed(Led* led) {
+  switch (led->mode) {
+    case LED_OFF:
+      led->state = false;
+      digitalWrite(led->pin, LOW);
+      break;
+
+    case LED_ON:
+      led->state = true;
+      digitalWrite(led->pin, HIGH);
+      break;
+
+    case LED_BLINK_SLOW:
+    case LED_BLINK_MEDIUM:
+    case LED_BLINK_FAST:
+      led->state = !led->state;
+      digitalWrite(led->pin, led->state);
+      break;
+  }
+}
+
+// configure the LED ticker based on the mode
+void configureTicker(Led* led) {
+  led->ticker.detach();  // Para evitar duplicatas
+
+  float interval = 0;
+
+  switch (led->mode) {
+    case LED_BLINK_SLOW:   interval = 0.9; break;
+    case LED_BLINK_MEDIUM: interval = 0.6; break;
+    case LED_BLINK_FAST:   interval = 0.3; break;
+    case LED_ON:
+    case LED_OFF:
+      updateLed(led);  // atualiza o estado imediatamente
+      return;
+  }
+
+  led->ticker.attach(interval, updateLed, led);
+}
+
+// set the LED mode and color
+void setSemaphore (LedMode mode, LedColor color) {
+  ledRed.mode = LED_OFF;
+  ledGreen.mode = LED_OFF;
+  switch (color) {
+    case LED_RED:
+      ledRed.mode = mode;
+      break;
+    case LED_GREEN:
+      ledGreen.mode = mode;      
+      break;
+    case LED_YELLOW:
+      ledRed.mode = mode;
+      ledGreen.mode = mode;
+      break;
+  }
+  configureTicker(&ledRed);
+  configureTicker(&ledGreen);
+}
+
 
 /**
  * functions to identify the cartridge
@@ -836,6 +941,8 @@ void clean_screen_text()
 // show the title screen
 void show_title_screen()
 {
+  setSemaphore(LED_ON, LED_GREEN);
+  analogWrite(LCD_BRIGHTNESS_PIN, 100); // set the brightness of the TFT screen
   setCpuFrequencyMhz(160);
   tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
 
@@ -844,7 +951,15 @@ void show_title_screen()
   tft.drawString("", 0, 10, 4);
   tft.drawString("", 0, 40, 4);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString(game_name, 120, 40, 4);
+
+  // if game name is longer than 18 chars, add ... at the end
+  String esp_game_name = game_name;
+  if (esp_game_name.length() > 18)
+  {
+    esp_game_name = esp_game_name.substring(0, 18 - 3) + "...";
+  }
+
+  tft.drawString(esp_game_name, 120, 40, 4);
   tft.setTextPadding(0);
 
   tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
@@ -867,11 +982,19 @@ void show_title_screen()
 // show the achievement screen
 void show_achievement(achievements_t achievement)
 {
+  setSemaphore(LED_BLINK_FAST, LED_GREEN);
+  analogWrite(LCD_BRIGHTNESS_PIN, 200); // set the brightness of the TFT screen
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
   char aux[256];
   sprintf(aux, "A=%s;%s;%s", "0", achievement.title.c_str(), achievement.url.c_str());
-#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
   send_ws_data(aux);
 #endif
+
+  // if achievement title is longer than 26 chars, add ... at the end
+  if (achievement.title.length() > 26)
+  {
+    achievement.title = achievement.title.substring(0, 26 - 3) + "...";
+  }
 
   setCpuFrequencyMhz(160);
   tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
@@ -943,8 +1066,9 @@ bool is_eeprom_configured()
 // save the RA credentials in the EEPROM
 void save_configuration_info_eeprom(String ra_user, String ra_pass)
 {
-  int user_len = ra_user.length();
-  int pass_len = ra_pass.length();
+  
+  uint8_t user_len = ra_user.length();
+  uint8_t pass_len = ra_pass.length();
   EEPROM.write(2, 1);
   EEPROM.write(3, user_len);
   for (int i = 0; i < user_len; i++)
@@ -963,7 +1087,7 @@ void save_configuration_info_eeprom(String ra_user, String ra_pass)
 // read the RA user from the EEPROM
 String read_ra_user_from_eeprom()
 {
-  int len = EEPROM.read(3);
+  uint8_t len = EEPROM.read(3);
   String ra_user = "";
   for (int i = 0; i < len; i++)
   {
@@ -975,8 +1099,8 @@ String read_ra_user_from_eeprom()
 // read the RA pass from the EEPROM
 String read_ra_pass_from_eeprom()
 {
-  int ra_user_len = EEPROM.read(3);
-  int len = EEPROM.read(4 + ra_user_len);
+  uint8_t ra_user_len = EEPROM.read(3);
+  uint8_t len = EEPROM.read(4 + ra_user_len);
   String ra_pass = "";
   for (int i = 0; i < len; i++)
   {
@@ -1061,6 +1185,7 @@ void handle_reset()
     return;
   }
   unsigned long start = millis();
+  setSemaphore(LED_BLINK_FAST, LED_YELLOW);
   while (digitalRead(RESET_PIN) == LOW && (millis() - start) < 10000)
   {
     yield();
@@ -1068,7 +1193,7 @@ void handle_reset()
   }
   if ((millis() - start) >= RESET_PRESSED_TIME)
   {
-
+    setSemaphore(LED_BLINK_SLOW, LED_YELLOW);
     Serial.print("reset");
     init_EEPROM(true);
     print_line("Reset successful!", 1, 0);
@@ -1076,6 +1201,7 @@ void handle_reset()
     delay(5000);
     ESP.restart();
   }
+  setSemaphore(LED_BLINK_MEDIUM, LED_YELLOW);
   print_line("Reset aborted!", 0, 1);
 }
 
@@ -1452,6 +1578,8 @@ int perform_http_request(
     HTTPClient https;
     https.setTimeout(timeoutMs);
     https.begin(client, url);
+    const char user_agent[] = "NES_RA_ADAPTER/0.5 rcheevos/11.6";
+    https.setUserAgent(user_agent);
     if (method == GET)
     {
       code = https.GET();
@@ -1529,6 +1657,16 @@ void setup()
   pinMode(ANALOG_SWITCH_PIN, OUTPUT);
   digitalWrite(ANALOG_SWITCH_PIN, ANALOG_SWITCH_DISABLE_BUS); // isolate the cartridge from NES
 
+  //config lcd brightness
+  pinMode(LCD_BRIGHTNESS_PIN, OUTPUT);
+  analogWrite(LCD_BRIGHTNESS_PIN, 100); // set the brightness of the TFT screen
+
+  // config the led status pin
+  pinMode(LED_STATUS_GREEN_PIN, OUTPUT);
+  pinMode(LED_STATUS_RED_PIN, OUTPUT);
+
+  setSemaphore(LED_BLINK_MEDIUM, LED_YELLOW);
+
   Serial.begin(9600);    // initialize the serial port
   Serial0.setTimeout(2); // 2ms timeout for Serial0
   Serial0.begin(115200);
@@ -1560,6 +1698,7 @@ void setup()
   if (!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)) // Initialise LittleFS
   {
     Serial.print("LittleFS initialisation failed!"); // debug
+    setSemaphore(LED_BLINK_FAST, LED_RED);
     while (1)
       yield(); // Stay here twiddling thumbs waiting
   }
@@ -1596,9 +1735,9 @@ void setup()
     WiFiManager wm;
     WiFiManagerParameter custom_p1(html_p1);
     WiFiManagerParameter custom_p2(html_p2);
-    WiFiManagerParameter custom_param_1("un", NULL, "", 24, " required autocomplete='off'");
+    WiFiManagerParameter custom_param_1("un", NULL, "", 20, " required autocomplete='off'");
     WiFiManagerParameter custom_p3(html_p3);
-    WiFiManagerParameter custom_param_2("up", NULL, "", 14, " type='password' required");
+    WiFiManagerParameter custom_param_2("up", NULL, "", 255, " type='password' required");
     WiFiManagerParameter custom_s(html_s);
     wifi_manager_init(wm); // initialize the wifi manager
     wm.addParameter(&custom_p1);
@@ -1611,6 +1750,7 @@ void setup()
     {
       if (wifi_configuration_tries == 0 && !wifi_configured)
       {
+        setSemaphore(LED_BLINK_MEDIUM, LED_YELLOW); 
         print_line(" Configure the Adapter:", 0, 1);
         print_line("Connect to its wifi network", 1, -1, -16);
         print_line("named \"NES_RA_ADAPTER\",", 2, -1, -16);
@@ -1620,6 +1760,7 @@ void setup()
       }
       else if (wifi_configuration_tries > 0 && !wifi_configured)
       {
+        setSemaphore(LED_BLINK_SLOW, LED_RED);
         print_line("Could not connect to wifi", 0, 2);
         print_line("network!", 1, -1, 16);
         print_line("check it and try again", 3, -1, 16);
@@ -1627,6 +1768,7 @@ void setup()
       }
       else if (wifi_configured)
       {
+        setSemaphore(LED_BLINK_MEDIUM, LED_RED);
         print_line("Could not log in", 0, 2);
         print_line("RetroAchievements!", 1, -1, 16);
         print_line("check the credentials", 3, -1, 16);
@@ -1635,6 +1777,7 @@ void setup()
       }
       if (wm.startConfigPortal("NES_RA_ADAPTER", "12345678"))
       {
+        setSemaphore(LED_BLINK_SLOW, LED_GREEN);
         Serial.print("connected...yeey :)");
         wifi_configured = true;
         clean_screen_text();
@@ -1645,6 +1788,7 @@ void setup()
         Serial.print(ra_user_token);
         if (ra_user_token.compareTo("null") != 0)
         {
+          setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
           print_line("Logged in RA!", 1, 0);
           play_success_sound();
           Serial.println(F("saving configuration info in eeprom"));
@@ -1653,12 +1797,14 @@ void setup()
         }
         else
         {
+          setSemaphore(LED_BLINK_FAST, LED_RED);
           Serial.print(F("could not log in RA"));
           clean_screen_text();
         }
       }
       else
       {
+        setSemaphore(LED_BLINK_MEDIUM, LED_RED);
         Serial.print(F("not connected...booo :("));
         clean_screen_text();
         wifi_configuration_tries += 1;
@@ -1677,6 +1823,7 @@ void setup()
       while (WiFi.status() != WL_CONNECTED)
         delay(500);
     }
+    setSemaphore(LED_BLINK_SLOW, LED_GREEN);
     print_line("Wifi OK!", 0, 0); // TODO: implement timeout
     String ra_user = read_ra_user_from_eeprom();
     String ra_pass = read_ra_pass_from_eeprom();
@@ -1684,11 +1831,13 @@ void setup()
     ra_user_token = try_login_RA(ra_user, ra_pass);
     if (ra_user_token.compareTo("null") != 0)
     {
+      setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
       print_line("Logged in RA!", 1, 0);
       play_success_sound();
     }
     else
     {
+      setSemaphore(LED_BLINK_FAST, LED_RED);
       print_line("Could not log in RA!", 1, 2);
       print_line("Consider reset the adapter", 3, -1, 16);
       play_error_sound();
@@ -1751,6 +1900,7 @@ void loop()
   // handle errors during the cartridge identification
   if (state > 200)
   {
+    setSemaphore(LED_BLINK_FAST, LED_RED);
     // 200 - 254 are error trying to identify the cartridge
     state = 128; // do nothing - it will not enable the BUS, so the game will not boot
     print_line("Cartridge not identified", 1, 2);
@@ -1760,6 +1910,7 @@ void loop()
 
   if (state == 198)
   {
+    setSemaphore(LED_BLINK_FAST, LED_RED);
     // connectivity error - no wifi or no result from the server after some retries
     state = 128; // do nothing - it will not enable the BUS, so the game will not boot
     print_line("Connectivity Error", 1, 2);
@@ -1770,6 +1921,7 @@ void loop()
 
   if (state == 199)
   {
+    setSemaphore(LED_BLINK_FAST, LED_RED);
     // json is too big
     state = 128; // do nothing - it will not enable the BUS, so the game will not boot
     print_line("RA response is too big", 1, 2);
@@ -1780,6 +1932,7 @@ void loop()
   // handle the cartridge identification
   if (state == 0)
   {
+    setSemaphore(LED_BLINK_FAST, LED_GREEN);
     print_line("Identifying cartridge...", 1, 1);
 
     Serial0.print(F("READ_CRC\r\n")); // send command to read cartridge crc
@@ -1831,8 +1984,6 @@ void loop()
       {
         // example of request
         // REQ=FF;M:POST;U:https://retroachievements.org/dorequest.php;D:r=login2&u=user&p=pass
-        const char user_agent[] = "NES_RA_ADAPTER/0.4 rcheevos/11.6";
-
         StreamString request;
         request.reserve(command.length());
         request += command.substring(4);
@@ -1853,6 +2004,7 @@ void loop()
         if (prefix("r=patch", data.c_str()) && ENABLE_SHRINK_LAMBDA == 1)
         {
           // change to a temporary aws lambda that shrinks the patch JSON
+          Serial.println("ENABLED LAMBDA SHRINK");
           url = SHRINK_LAMBDA_URL;
         }
 
@@ -1860,7 +2012,7 @@ void loop()
         if (prefix("r=patch", data.c_str()))
         {
           // because of this amount of RAM we can only enable the websocket after get the achievement list
-          reserve = 65250; // bold - need more tests, but at least supports Final Fantasy for now - could allocate 65500 in tests
+          reserve = 65250; // bold - need more tests, but at least supports Final Fantasy for now - could allocate 65250 in tests
           if (ENABLE_SHRINK_LAMBDA)
           {
             reserve = 32768;
@@ -2023,12 +2175,6 @@ void loop()
         pos = command.indexOf(";");
         String achievements_title = command.substring(0, pos);
 
-        // if achievement title is longer than 26 chars, add ... at the end
-        if (achievements_title.length() > 26)
-        {
-          achievements_title = achievements_title.substring(0, 26 - 3) + "...";
-        }
-
         command = command.substring(pos + 1);
         String achievements_image = command;
         achievements_image.trim();
@@ -2064,6 +2210,7 @@ void loop()
         }
         else
         {
+          setSemaphore(LED_ON, LED_GREEN);
           char file_name[64];
           sprintf(file_name, "/title_%s.png", game_id.c_str());
           try_download_file(game_image, file_name);
@@ -2089,7 +2236,7 @@ void loop()
       // (probably the user resets the NES after the game is identified or NES starts the game
       // by itself once the BUS is connected)
       else if (command.startsWith("NES_RESETED"))
-      {
+      { 
         uint8_t random = (uint8_t)esp_random();
         game_session = random;
 #ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT

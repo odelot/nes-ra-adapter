@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-05-15
-   Version:          0.4
+   Date:             2025-06-24
+   Version:          0.5
    By odelot
 
    Libs used:
@@ -82,7 +82,7 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "0.4"
+#define FIRMWARE_VERSION "0.5"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -1143,9 +1143,8 @@ rc_client_t *initialize_retroachievements_client(rc_client_t *g_client, rc_clien
     // Provide a logging function to simplify debugging
     rc_client_enable_logging(g_client, RC_CLIENT_LOG_LEVEL_VERBOSE, log_message);
 
-    // Disable hardcore - if we goof something up in the implementation, we don't want our
-    // account disabled for cheating.
-    rc_client_set_hardcore_enabled(g_client, 0);
+    // Enable hardcore mode - we are on a real NES console and using a real cartridge and not a everdrive or game genie    
+    rc_client_set_hardcore_enabled(g_client, 1);
     return g_client;
 }
 
