@@ -4,7 +4,7 @@ include(FetchContent)
 FetchContent_Declare(
     rcheevos
     GIT_REPOSITORY https://github.com/RetroAchievements/rcheevos.git
-    GIT_TAG        master
+    GIT_TAG        v11.6.0
 )
 
 FetchContent_MakeAvailable(rcheevos)

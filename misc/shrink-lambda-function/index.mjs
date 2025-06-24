@@ -44,7 +44,7 @@ export const handler = async (event) => {
         // add NES_RA_ADAPTER user agent to the request
         const options = {
             headers: {
-                'User-Agent': 'NES_RA_ADAPTER/0.1 rcheevos/11.6'
+                'User-Agent': 'NES_RA_ADAPTER/0.5 rcheevos/11.6'
             }
         };
 
