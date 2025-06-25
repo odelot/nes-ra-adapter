@@ -540,7 +540,7 @@ void remove_achievements_with_flags_5(String &json)
   int arrayEnd = json.indexOf(']', arrayStart);
   if (arrayStart == -1 || arrayEnd == -1)
     return;
-
+  int objCount = 0;
   int pos = arrayStart + 1;
   while (pos < arrayEnd)
   {
@@ -561,20 +561,24 @@ void remove_achievements_with_flags_5(String &json)
 
     if (objEnd >= arrayEnd)
       break;
+    objCount++;
 
     int flagsPos = json.indexOf("\"Flags\":5", objStart);
     if (flagsPos != -1 && flagsPos < objEnd)
     {
-      // Verifica se tem vírgula antes do objeto
+      
       int removeStart = objStart;
       while (removeStart > arrayStart && isspace(json.charAt(removeStart - 1)))
         removeStart--;
       if (json.charAt(removeStart - 1) == ',')
         removeStart--;
-
+      if (objCount == 1 && json.charAt(objEnd + 1) == ',' ) {
+        objEnd++; // remove the comma after the first object
+      }
+      
       json.remove(removeStart, objEnd - removeStart + 1);
-      arrayEnd = json.indexOf(']', arrayStart); // atualiza nova posição do fim do array
-      pos = removeStart;                        // recomeça do ponto anterior
+      arrayEnd = json.indexOf(']', arrayStart); // refresh arrayEnd after removal
+      pos = removeStart;                        // reset pos to the start of the removed object
     }
     else
     {
