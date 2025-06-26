@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2025-06-24
-   Version:          0.5
+   Date:             2025-06-25
+   Version:          0.6
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -65,7 +65,7 @@
 #include <Wire.h>
 #include <Ticker.h>
 
-#define VERSION "0.5"
+#define VERSION "0.6"
 
 /**
  * defines for the LittleFS
@@ -237,11 +237,11 @@ TFT_eSPI tft = TFT_eSPI();
 achievements_FIFO_t achievements_fifo;
 
 // custom html and parameters for the configuration portal
-const char head[] PROGMEM = "<style>#l,#i,#z{text-align:center}#i,#z{margin:15px auto}button{background-color:#0000FF;}#l{margin:0 auto;width:100%; font-size: 28px;}p{margin-bottom:-5px}[type='checkbox']{height: 20px;width: 20px;}</style><script>var w=window,d=document,e=\"password\";function iB(a,b,c){a.insertBefore(b,c)}function gE(a){return d.getElementById(a)}function cE(a){return d.createElement(a)};\"http://192.168.1.1/\"==w.location.href&&(w.location.href+=\"wifi\");</script>\0";
+const char head[] PROGMEM = "<style>#l,#i,#z{text-align:center}#i,#z{margin:15px auto}button{background-color:#0000FF;}#l{margin:0 auto;width:100%; font-size: 28px;}p{margin-bottom:-5px}[type='checkbox']{height: 20px;width: 20px;}</style><script>var w=window,d=document,e=\"password\";function cc(){z=gE(this.w);z.type!=e?z.type=e:z.type='text';z.focus();}function iB(a,b,c){a.insertBefore(b,c)}function gE(a){return d.getElementById(a)}function cE(a){return d.createElement(a)};\"http://192.168.1.1/\"==w.location.href&&(w.location.href+=\"wifi\");</script>\0";
 const char html_p1[] PROGMEM = "<p id='z' style='width: 80%;'>Enter the RetroAchievements credentials below:</p>\0";
 const char html_p2[] PROGMEM = "<p>&#8226; RetroAchievements user name: </p>\0";
 const char html_p3[] PROGMEM = "<p>&#8226; RetroAchievements user password: </p>\0";
-const char html_s[] PROGMEM = "<script>gE(\"s\").required=!0;l=cE(\"div\");l.innerHTML=\"NES RetroAchievements Adapter\",l.id=\"l\";m=d.body.childNodes[0];iB(m,l,m.childNodes[0]);p=cE(\"p\");p.id=\"i\",p.innerHTML=\"Choose the network you want to connect with:\",iB(m,p,m.childNodes[1]);</script>\0";
+const char html_s[] PROGMEM = "<script>gE(\"s\").required=!0;l=cE(\"div\");l.innerHTML=\"NES RetroAchievements Adapter\",l.id=\"l\";m=d.body.childNodes[0];iB(m,l,m.childNodes[0]);p=cE(\"p\");p.id=\"i\",p.innerHTML=\"Choose the network you want to connect with:\",iB(m,p,m.childNodes[1]),a=d.createTextNode(\" show \"+e),sp=(s=d.getElementById(\"up\").nextSibling).parentNode,(c1=d.createElement(\"input\")).type=\"checkbox\",c1.onclick=cc,c1.w=\"up\",iB(sp,c1,s),iB(sp,a,s);</script>\0";
 
 // ws variables
 #ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
@@ -1582,7 +1582,7 @@ int perform_http_request(
     HTTPClient https;
     https.setTimeout(timeoutMs);
     https.begin(client, url);
-    const char user_agent[] = "NES_RA_ADAPTER/0.5 rcheevos/11.6";
+    const char user_agent[] = "NES_RA_ADAPTER/0.6 rcheevos/11.6";
     https.setUserAgent(user_agent);
     if (method == GET)
     {
@@ -1977,7 +1977,7 @@ void loop()
     }
 
     // wait for a command terminator \r\n
-    if (buffer.indexOf("\r\n") > 0)
+    while (buffer.indexOf("\r\n") > 0)
     {
       // we have a command \o/
       String command = buffer.substring(0, buffer.indexOf("\n") + 1);
@@ -2015,6 +2015,8 @@ void loop()
         int reserve;
         if (prefix("r=patch", data.c_str()))
         {
+          data.trim();
+          data += "&f=3"; // filter achievements with flag = 5
           // because of this amount of RAM we can only enable the websocket after get the achievement list
           reserve = 65250; // bold - need more tests, but at least supports Final Fantasy for now - could allocate 65250 in tests
           if (ENABLE_SHRINK_LAMBDA)
@@ -2028,7 +2030,7 @@ void loop()
         }
 
         StreamString response;
-        // reserve 32KB of memory for the response
+        // reserve memory for the response
         if (!response.reserve(reserve))
         {
           Serial.print(F("could not allocate: "));
@@ -2086,6 +2088,16 @@ void loop()
               {
                 Serial.println(F("removing achievements with MemAddr > 1KB"));
                 remove_achievements_with_long_MemAddr(response, 1024);
+              }
+              if (response.length() > SERIAL_MAX_PICO_BUFFER)
+              {
+                Serial.println(F("removing achievements with MemAddr > 768B"));
+                remove_achievements_with_long_MemAddr(response, 768);
+              }
+              if (response.length() > SERIAL_MAX_PICO_BUFFER)
+              {
+                Serial.println(F("removing achievements with MemAddr > 512B"));
+                remove_achievements_with_long_MemAddr(response, 512);
               }
               Serial.println(response);
               Serial.print(F("NEW PATCH LENGTH: ")); // debug

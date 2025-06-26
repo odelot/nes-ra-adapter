@@ -125,6 +125,10 @@ The adapter uses two microcontrollers working together:
 
 - **Server Response Size:** RAM is limited to 32KB for storing the RetroAchievements response, which includes the list of achievements and memory addresses to monitor. The source-code of a AWS Lambda function is available (misc folder) to remove unnecessary fields or reduce the achievement list, ensuring the response fits within this limit.
 
+- **Rare Limitation: Some Games May Be Unmasterable** It’s possible that the ESP32 (with a ~62KB limit) not only removes unused attributes from achievements, but also filters out very large achievements if the full list exceeds the Raspberry Pi Pico’s 32KB limit. This means some games might not be fully masterable using the adapter. In future versions, I’ll look into adding a warning for the user when this filtering occurs. (out of 50 games tested, this filtering happened in two - FF1 lost a missible achievement and Guardian Legend lost some big achievements)
+
+- **Leaderboards is disabled** To shrink data between ESP32 and Pico and because we are using a heuristic to detect frames, the leaderboard feature is disabled.
+
 ---
 
 ## General Information
@@ -147,6 +151,7 @@ Update the case (currently inspired by the Game Genie) to fit the new circuit la
 
 ## Version History
 
+- **Version 0.6 (2025-06-25)** - Bug fix in serial comm on ESP32, "show password" feature for RA credentials during setup, filtering of some achievements directly in the RA API.
 - **Version 0.5 (2025-06-24)** - Hardcore mode enabled. LED status in a semaphore way (green, yellow, red) to make the LCD optional. Minor bug fixes.
 - **Version 0.4 (2025-05-15)** - Make the experimental mirror screen feature more stable on pico firmaware. Releases an Android App (APK - release section) to help on the usage of the mirror screen feature.
 - **Version 0.3 (2025-04-24)** – Improve error handling, optimize ram usage, deployed an experimental feature to stream the content of the tiny LCD to a smartphone

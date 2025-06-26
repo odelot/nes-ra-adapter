@@ -125,6 +125,10 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 - **Tamanho da Resposta do Servidor**: A RAM disponível para armazenar a resposta do RetroAchievements, que contém a lista de conquistas e endereços de memória a serem monitorados, é limitada a 32KB. Publicaremos um código-fonte de uma função AWS Lambda para remover campos desnecessários ou reduzir a lista de conquistas, garantindo que a resposta caiba dentro desse limite.
 
+- **Limitação rara: alguns jogos podem ser impossíveis de Masterizar** É possível que o ESP32 (com um limite de ~62 KB) não apenas remova atributos não utilizados das conquistas, mas também filtre conquistas muito grandes se a lista completa exceder o limite de 32 KB do Raspberry Pi Pico. Isso significa que alguns jogos podem não ser totalmente masterizáveis ​​usando o adaptador. Em versões futuras, analisarei a possibilidade de adicionar um aviso ao usuário quando essa filtragem ocorrer. (de 50 jogos testados, essa filtragem aconteceu em dois - FF1 perdeu um achievement missible e Guardian Legend perdeu alguns achievements grandes)
+
+- **Placar de líderes desativado** Para reduzir os dados entre o ESP32 e o Pico e como estamos usando uma heurística para detectar quadros, o recurso de placar de líderes está desativado.
+
 
 ---
 
@@ -148,6 +152,7 @@ Atualizar o case (atualmente inspirado no Game Genie) para se adequar ao novo fo
 
 ## Histórico de Versões
 
+- **Version 0.6 (2025-06-25)** - Correção de bug na comunicação serial no ESP32, recurso "show password" para credenciais do RA durante a configuração, filtragem de algumas conquistas diretamente na API do RA.
 - **Versão 0.5 (2025-06-24)** - Modo hardcore ativado. LED de status no formato de semáforo (verde, amarelo, vermelho) para tornar o LCD opcional. Pequenas correções de bugs.
 - **Versão 0.4 (2025-05-15)** – Firmware do Pico mais estável quando ligada a funcionalidade experimental de espelhamento da tela no smartphone. Além disso, um app Android foi disponibilizado (APK, na sessão de release) para auxiliar no uso da nova funcionalidade. 
 - **Versão 0.3 (2025-04-24)** – Melhorias no tratamento de erros, otimização do uso de RAM e implementação de uma funcionalidade experimental para transmitir o conteúdo da telinha LCD para um smartphone.

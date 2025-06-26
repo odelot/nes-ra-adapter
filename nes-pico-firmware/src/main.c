@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-06-24
-   Version:          0.5
+   Date:             2025-06-25
+   Version:          0.6
    By odelot
 
    Libs used:
@@ -82,7 +82,7 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "0.5"
+#define FIRMWARE_VERSION "0.6"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -1060,7 +1060,7 @@ static void event_handler(const rc_client_event_t *event, rc_client_t *client)
         break;
 #endif
     default:
-        printf("Unhandled event %d\n", event->type);
+        // printf("Unhandled event %d\n", event->type); //debug 
         break;
     }
 }
@@ -1504,6 +1504,7 @@ int main()
                     // init rcheevos
                     g_client = initialize_retroachievements_client(g_client, read_memory_do_nothing, server_call);
                     rc_client_get_user_agent_clause(g_client, rcheevos_userdata, sizeof(rcheevos_userdata)); // TODO: send to esp32 before doing requests
+                    printf("USER_AGENT=%s\r\n", rcheevos_userdata); // debug
                     rc_client_set_event_handler(g_client, event_handler);
                     rc_client_set_get_time_millisecs_function(g_client, get_pico_millisecs);
                     rc_client_begin_login_with_token(g_client, ra_user, ra_token, rc_client_login_callback, g_callback_userdata);
