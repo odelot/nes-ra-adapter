@@ -152,7 +152,8 @@ Atualizar o case (atualmente inspirado no Game Genie) para se adequar ao novo fo
 
 ## Histórico de Versões
 
-- **Version 0.6 (2025-06-25)** - Correção de bug na comunicação serial no ESP32, recurso "show password" para credenciais do RA durante a configuração, filtragem de algumas conquistas diretamente na API do RA.
+- **Versão 0.7 (2025-07-09)** - Mudanças na heuristica de detecção de frame, usando microsegundos ao invés de milesegundos e fazendo frame skip, se necessário, para ficar o mais proximo possivel da cadencia de 60hz (ou 50hz, ao manipular um DEFINE durante a compilação).
+- **Versão 0.6 (2025-06-25)** - Correção de bug na comunicação serial no ESP32, recurso "show password" para credenciais do RA durante a configuração, filtragem de algumas conquistas diretamente na API do RA.
 - **Versão 0.5 (2025-06-24)** - Modo hardcore ativado. LED de status no formato de semáforo (verde, amarelo, vermelho) para tornar o LCD opcional. Pequenas correções de bugs.
 - **Versão 0.4 (2025-05-15)** – Firmware do Pico mais estável quando ligada a funcionalidade experimental de espelhamento da tela no smartphone. Além disso, um app Android foi disponibilizado (APK, na sessão de release) para auxiliar no uso da nova funcionalidade. 
 - **Versão 0.3 (2025-04-24)** – Melhorias no tratamento de erros, otimização do uso de RAM e implementação de uma funcionalidade experimental para transmitir o conteúdo da telinha LCD para um smartphone.

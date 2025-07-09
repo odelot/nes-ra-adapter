@@ -151,6 +151,7 @@ Update the case (currently inspired by the Game Genie) to fit the new circuit la
 
 ## Version History
 
+- **Version 0.7 (2025-07-09)** - Changes to the frame detection heuristic, using microseconds instead of milliseconds and doing frame skipping if necessary to stay as close as possible to the 60hz cadence (or 50hz, when handling a DEFINE during compilation).
 - **Version 0.6 (2025-06-25)** - Bug fix in serial comm on ESP32, "show password" feature for RA credentials during setup, filtering of some achievements directly in the RA API.
 - **Version 0.5 (2025-06-24)** - Hardcore mode enabled. LED status in a semaphore way (green, yellow, red) to make the LCD optional. Minor bug fixes.
 - **Version 0.4 (2025-05-15)** - Make the experimental mirror screen feature more stable on pico firmaware. Releases an Android App (APK - release section) to help on the usage of the mirror screen feature.

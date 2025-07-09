@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-06-25
-   Version:          0.6
+   Date:             2025-07-09
+   Version:          0.7
    By odelot
 
    Libs used:
@@ -82,7 +82,7 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "0.6"
+#define FIRMWARE_VERSION "0.7"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -126,11 +126,20 @@
 #define UART_TX_PIN 28 // GPIO pin for TX
 #define UART_RX_PIN 29 // GPIO pin for RX
 
+#define REFRESH_RATE_60_HZ // comment this line to compile to 50hz
+
+#ifdef REFRESH_RATE_60_HZ
+#define FRAME_TIME_US 16667 // 1000000 / 60 = 16666.6667
+#else
+#define FRAME_TIME_US 20000 // 1000000 / 50 = 20000
+#endif
+
+
 /**
  * EXPERIMENTAL - enable internal web app (uncomment to enable)
  */
 
-// #define ENABLE_INTERNAL_WEB_APP_SUPPORT
+#define ENABLE_INTERNAL_WEB_APP_SUPPORT
 
 const uint16_t NES_D[8] = {NES_D0, NES_D1, NES_D2, NES_D3, NES_D4, NES_D5, NES_D6, NES_D7};
 const uint16_t NES_A[15] = {NES_A00, NES_A01, NES_A02, NES_A03, NES_A04, NES_A05, NES_A06, NES_A07, NES_A08, NES_A09, NES_A10, NES_A11, NES_A12, NES_A13, NES_A14};
@@ -1305,13 +1314,22 @@ int main()
                     }
                     printf("\n");
                 }
-
+                u_int64_t now = time_us_64(); // get current time in microseconds
                 // if memory address is 0x4014, we can assume a frame is being processed
                 if (memory.address == 0x4014)
                 {
                     // best place to detect a frame so far
-                    rc_client_do_frame(g_client);
-                    last_frame_processed = to_ms_since_boot(get_absolute_time());
+                    u_int64_t diff = now - last_frame_processed; // debug
+                    // printf("F: %d, diff: %llu us\n", frame_counter, diff); // debug
+                    if (diff > (FRAME_TIME_US - 667)) { // inside a frame window, so process the frame
+                        rc_client_do_frame(g_client);
+                        last_frame_processed = now; // get current time in microseconds
+                    } 
+                    // else {
+                        //printf("s"); // debug - updated oam register too early - skip frame 
+                    //}
+                    
+                    
 
                     // memory dump during a frame for DEBUG
                     // printf("_F");
@@ -1328,7 +1346,7 @@ int main()
                     // debug memory circular buffer size - prints every 30 seconds with the circular buffer between the cores
                     // are not empty - helps us monitoring the size of the circular buffer
                     frame_counter += 1;
-                    if (frame_counter % 1800 == 0) //~ 30 seconds
+                    if (frame_counter % 1800 == 0) //~ 30 seconds in 60hz
                     {
                         if (memory_buffer_size() > 0)
                         {
@@ -1355,12 +1373,12 @@ int main()
                     }
                 }
 
-                // simulate a frame every 18ms if we cannot detect any frame using the OAMDMA address monitoring
-                // example of need: punchout
-                u_int64_t now = to_ms_since_boot(get_absolute_time());
-                if ((now - last_frame_processed) > 18)
+                // simulate a frame every 16750ms (for 60hz) if we cannot detect any frame using the OAMDMA address monitoring
+                // example of need: punchout / chip n dale rescue rangers
+                
+                if ((now - last_frame_processed) > (FRAME_TIME_US + 85) ) // a frame takes 16666 microsecond in 60hz and 20000 microseconds in 50hz
                 {
-                    // printf("sF_");
+                    // printf("*"); 
                     rc_client_do_frame(g_client);
                     last_frame_processed = now;
                     // memory dump during a frame for DEBUG
@@ -1504,7 +1522,7 @@ int main()
                     // init rcheevos
                     g_client = initialize_retroachievements_client(g_client, read_memory_do_nothing, server_call);
                     rc_client_get_user_agent_clause(g_client, rcheevos_userdata, sizeof(rcheevos_userdata)); // TODO: send to esp32 before doing requests
-                    printf("USER_AGENT=%s\r\n", rcheevos_userdata); // debug
+                    printf("USER_AGENT=%s\r\n", rcheevos_userdata);
                     rc_client_set_event_handler(g_client, event_handler);
                     rc_client_set_get_time_millisecs_function(g_client, get_pico_millisecs);
                     rc_client_begin_login_with_token(g_client, ra_user, ra_token, rc_client_login_callback, g_callback_userdata);

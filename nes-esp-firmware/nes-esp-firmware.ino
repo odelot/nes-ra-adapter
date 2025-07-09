@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2025-06-25
-   Version:          0.6
+   Date:             2025-07-09
+   Version:          0.7
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -65,7 +65,7 @@
 #include <Wire.h>
 #include <Ticker.h>
 
-#define VERSION "0.6"
+#define VERSION "0.7"
 
 /**
  * defines for the LittleFS
@@ -161,7 +161,7 @@
  * EXPERIMENTAL - enable internal web app (uncomment to enable)
  */
 
-//#define ENABLE_INTERNAL_WEB_APP_SUPPORT
+#define ENABLE_INTERNAL_WEB_APP_SUPPORT
 
 // types for http request
 typedef enum HttpRequestMethod
@@ -347,6 +347,12 @@ String get_MD5(String crc, bool first_bank)
     Serial.println("CRC is 0xBD7BC39F - skipping"); // debug
     return "";
   }
+  if (crc == "B2AA7578")
+  {                                                 // CRC with many collisions 
+    Serial.println("CRC is 0xB2AA7578 - skipping"); // debug
+    return "";
+  }
+  
 
   const char *filePath = "/games.txt";
 
@@ -1582,7 +1588,7 @@ int perform_http_request(
     HTTPClient https;
     https.setTimeout(timeoutMs);
     https.begin(client, url);
-    const char user_agent[] = "NES_RA_ADAPTER/0.6 rcheevos/11.6";
+    const char user_agent[] = "NES_RA_ADAPTER/0.7 rcheevos/11.6";
     https.setUserAgent(user_agent);
     if (method == GET)
     {
