@@ -9,6 +9,12 @@ Repositório do projeto **NES RetroAchievements Adapter** – uma iniciativa mak
   </a>
 </p>
 
+**Agora você não precisa abrir seu console!!!**
+
+<p align="center">  
+    <img width="70%" src="https://github.com/odelot/nes-ra-adapter/blob/main/images/version1.0.png">  
+</p>
+
 ---
 
 ## Índice
@@ -56,25 +62,32 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 
 ### Adquira as partes
 
-| nome da parte                  | quantidade | valor total (U$)*      |
-|--------------------------------|------------|------------------------|
-| slot 72 pinos**                | 2x         | (2x ~U$2,50) ~ U$5,00  |
-| SN74HC4066***                  | 7x         | (7x ~U$0,85) ~ U$6,00  |
-| Raspberry Pi Pico (placa roxa) | 1x         | ~ U$3,00               |
-| ESP32 C3 Supermini             | 1x         | ~ U$2,50               |
-| LCD 240x240 driver ST7789      | 1x         | ~ U$2,75               |
-| Buzzer 3v + Transistor BC548   | 1x         | ~ U$1,25               |
-| **Total** (sem PCB, case 3d)   |            | ~ **U$20,50**          |
+| Nome da Parte                    | Quantidade | Custo (USD)*         |
+|----------------------------------|------------|----------------------|
+| 72-pin slot                      | 1x         | ~ $2.50              |
+| SN74LVC1G3157DBVR                | 26x        | ~ $3.25              |
+| Raspberry Pi Pico (purple board) | 1x         | ~ $3.00              |
+| ESP32 C3 Supermini               | 1x         | ~ $2.50              |
+| LCD 240x240 driver ST7789        | 1x         | ~ $2.75              |
+| Buzzer 3V + Transistor BC548     | 1x         | ~ $1.25              |
+| Flat cable 20cm 1mm reverse 5pin | 1x         | ~ $0.20              |
+| M2 screw 6mm flat head with nut  | 10x        | ~ $0.30              |
+| M2 screw 10mm                    | 4x         | ~ $0.15              |
+| **Total** (without PCB, 3D case) |            | ~ **$15.95**         |
 
 \* Fonte: Aliexpress - 2025-03-29 <br/>
-\** Na versão miniaturizada, só será necessário 1 slot <br/>
-\*** Alternativa mais estável ao SN74HC4066 seriam 26x SN74LVC1G3157DBVR (smd) - veja mais detalhes [aqui](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr)
 
 ### Monte o circuito
 
-Atualmente, o projeto disponibiliza duas opções para montagem de circuito: 
-1. **Protoboard/Placas Perfuradas:** Monte o circuito usando uma protoboard, seguindo o esquema disponível na pasta `hardware`.
-2. **PCBs:** encomende as PCBs (v0.1 ou v0.2) usando os arquivos na pasta `hardware` para uma montagem mais robusta.
+A partir da versão 1.0, graças às placas personalizadas do GH, você não precisa mais abrir o console para usar o adaptador. Com o case 3D que eu projetei, o adaptador funciona como um GameGenie — é só encaixar na gaveta de cartuchos e pronto. Também está disponível um case específico para o modelo top-loader.
+
+O adaptador é composto por duas PCBs conectadas por um cabo flat:
+  - **Placa principal**: possui 26 chaves analógicas SMD (a parte mais desafiadora da solda), um Raspberry Pi Pico RP2040 roxo, o slot de cartucho, conector do cabo flat e alguns capacitores de acoplamento.
+  - **Placa secundária**: inclui um ESP32 C3 Supermini, display LCD ST7789, buzzer, transistor, capacitor de acoplamento, resistores de 10k e 1k, além de um LED bicolor opcional (verde/vermelho) com dois resistores de 100k, que também pode ser usado como alternativa ao LCD.
+
+Tudo o que você precisa para montar está disponível no repositório:
+  - **/hardware** → esquema e arquivos Gerber para produção das PCBs
+  - **/3d-parts** → arquivos STL para os cases das versões front-loader e top-loader
 
 ### Atualize os firmwares do Pico e ESP32
 
@@ -113,7 +126,7 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 - **Conectividade e Interface:** Fornece Internet ao NES e gerencia uma tela TFT para exibir conquistas, além de um buzzer para efeitos sonoros. 
 - **Gerenciamento de Configuração:** Armazena credenciais de Wi-Fi e RetroAchievements na EEPROM; configuração é feita via smartphone conectado ao ponto de acesso do ESP32. 
 - **Sistema de Arquivos e Comunicação:** Utiliza LittleFS para armazenar uma tabela de hash (CRC32 para MD5) para identificação de cartuchos e imagens dos jogos. 
-- **EXPERIMENTAL – Transmite o conteúdo da LCD para uma Web App** Utiliza WebSocket e mDNS para servir uma página web que espelha o conteúdo da telinha LCD e exibe eventos de conquistas adicionais que não cabem na tela física. (Mais detalhes disponíveis na pasta `misc`) O web app fica disponível assim que a imagem do jogo aparece na LCD e pode ser acessado em `http://nes-ra-adapter.local` — certifique-se de que seu smartphone esteja conectado à mesma rede Wi-Fi.
+- **Transmite o conteúdo da LCD para uma Web App** Utiliza WebSocket e mDNS para servir uma página web que espelha o conteúdo da telinha LCD e exibe eventos de conquistas adicionais que não cabem na tela física. (Mais detalhes disponíveis na pasta `misc`) O web app fica disponível assim que a imagem do jogo aparece na LCD e pode ser acessado em `http://nes-ra-adapter.local` — certifique-se de que seu smartphone esteja conectado à mesma rede Wi-Fi.
 
 ---
 
@@ -140,18 +153,9 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 ---
 
-## Próximos Passos
-
-### 1 - Miniaturizar o Circuito:
-Desenvolver uma placa do tamanho aproximado de um Game Genie que caiba no slot de cartuchos do NES 001. Incluir plano de terra, capacitores de desacoplamento, resistores limitadores de corrente, e trilhas menores para reduzir interferência.
-
-### 2 - Adaptar o Case ao Circuito Miniaturizado:
-Atualizar o case (atualmente inspirado no Game Genie) para se adequar ao novo formato do circuito.
-
----
-
 ## Histórico de Versões
 
+- **Version 1.0 (2025-11-09)** - Nova versão miniaturizada da placa e do case 3d - não é necessário abrir o console. Pequenas mudanças na heuristica de detecção de frames. LED Bicolor (opcional) caso queira substituir a tela LCD. Opção de inverter o conteudo da tela LCD durante a compilação do firmware do ESP32 (necessario para a montagem do case)
 - **Versão 0.7 (2025-07-09)** - Mudanças na heuristica de detecção de frame, usando microsegundos ao invés de milesegundos e fazendo frame skip, se necessário, para ficar o mais proximo possivel da cadencia de 60hz (ou 50hz, ao manipular um DEFINE durante a compilação).
 - **Versão 0.6 (2025-06-25)** - Correção de bug na comunicação serial no ESP32, recurso "show password" para credenciais do RA durante a configuração, filtragem de algumas conquistas diretamente na API do RA.
 - **Versão 0.5 (2025-06-24)** - Modo hardcore ativado. LED de status no formato de semáforo (verde, amarelo, vermelho) para tornar o LCD opcional. Pequenas correções de bugs.
@@ -178,15 +182,7 @@ Todos estão convidados a colaborar com o projeto!
 
 - **P: Como posso conseguir o adaptador?**
 - **R**: É um projeto DIY – você mesmo pode construí-lo!
-Se você não se sente confortável em fazê-lo sozinho, lembre-se de que, assim como outros projetos open-source (como [GBSControl](https://github.com/ramapcsx2/gbs-control), [GB Interceptor](https://github.com/Staacks/gbinterceptor) e [Open Source Cartridge Reader](https://github.com/sanni/cartreader)), a própria comunidade pode se organizar para fabricar e comercializar o adaptador.
-<br/>
-
-- **P: Posso fabricar e vender o adaptador?**
-- **R**: Sim! As licenças de software e hardware permitem o uso comercial. Vale notar que os cases 3D foram projetados no Fusion 360 para fins não lucrativos, mas podem ser remodelados futuramente para uso comercial em outros softwares.
-<br/>
-
-- **P: Preciso abrir meu NES para usar o adaptador?**
-- **R**: Nossa meta é que o adaptador seja plug-and-play, semelhante ao Game Genie, encaixando-se no slot de cartuchos sem necessidade de abrir o console. Entretanto, os protótipos atuais exigem que o NES seja aberto para instalação.
+Se você não se sente confortável em fazê-lo sozinho, lembre-se de que, assim como outros projetos open-source (como [GBSControl](https://github.com/ramapcsx2/gbs-control), [GB Interceptor](https://github.com/Staacks/gbinterceptor) e [Open Source Cartridge Reader](https://github.com/sanni/cartreader)), a própria comunidade pode se organizar para fabricar e comercializar o adaptador. Além disso, a pessoa que modifica seus consoles é perfeitamente capaz de montar um para você.
 <br/>
 
 - **P: Preciso modificar meu NES para utilizar o adaptador?**
@@ -198,7 +194,7 @@ Se você não se sente confortável em fazê-lo sozinho, lembre-se de que, assim
 <br/>
 
 - **P: O adaptador funcionará com everdrives?**
-- **R**: O adaptador precisa ler o cartucho para identifica-lo e, quando usado com everdrive, ele lê o firmware do everdrive e não o jogo. Essa é uma das razões para ser possivel suportar everdrive.
+- **R**: Não. O adaptador precisa ler o cartucho para identifica-lo e, quando usado com everdrive, ele lê o firmware do everdrive e não o jogo. Essa é uma das razões para ser possivel suportar everdrive.
 <br/>
 
 - **P: O adaptador funcionará com modelos japoneses?**
@@ -210,7 +206,7 @@ Se você não se sente confortável em fazê-lo sozinho, lembre-se de que, assim
 <br/>
 
 - **P: O adaptador funciona com os famiclones brasileiros?**
-- **R**: Nosso protótipo atual possui um slot fêmea compatível com o NES americano (NES-001). A versão miniaturizada terá um conector macho que poderá ser adaptado para uso com o NES-001, NES-101 (top loader) e possivelmente outros consoles, incluindo famiclones, por meio de adaptadores
+- **R**: Testado com sucesso no ProSystem-8 Baby
 
 ---
 

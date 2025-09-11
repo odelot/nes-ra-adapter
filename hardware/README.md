@@ -1,12 +1,30 @@
 # Circuit Schematics and PCB
 
-Here are the schematics transferred from our protoboard to the prototype PCBs. You'll notice that this is the bare minimum needed to test our design—without decoupling capacitors or certain resistors that could help limit current or prevent voltage spikes during startup. We plan to add these components in the miniaturized version. Use this at your own risk (though we've been using and testing it for a while), and feel free to suggest improvements.
+## Final Version 1.0 - Miniaturized 
 
-<img src="https://github.com/odelot/nes-ra-adapter/blob/main/images/schematic-v0.1.png"/>
+Finally you can use the adapter without open your NES. Order the PCB, aseembly it and be happy ;-) Made by the awesome GH.
+
+<p align="center">
+  <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/board1.0.png"/>
+</p>
+
+<p align="center">
+  <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/board1.0-assembled.png"/>
+</p>
+
+Schematics: (very poor version - we will upload a decent file soon)
+
+<p align="center">
+  <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/schematic-v1.0.png"/>
+</p>
 
 ## Prototype PCBs Sets 
 
 We have two sets of PCBs used for development, implementing the minimal schematic shown above. Each has its pros and cons, but both feature large traces (which isn't ideal) and lack a ground plane. These were designed purely for development purposes. All prototype PCBs were created using Fritzing version 0.9.3b by odelot (a Computer Scientist—please forgive him for that! 😆).
+
+Schematics:
+
+<img src="https://github.com/odelot/nes-ra-adapter/blob/main/images/schematic-v0.1.png"/>
 
 ### Prototype v0.1
 
@@ -39,16 +57,6 @@ To minimize propagation delay issues, we designed an adapter that replaces the 4
 
 <p align="center">
   <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/SN74HC4066vsSN74LVC1G3157DBVR.png"/>
-</p>
-
-## Next step
-
-### Build a miniturized circuit
-
-GH will take the design developed with Odelot and miniaturize it to fit inside our Game Genie-style case. The traces will be smaller, and additional components will be included to make the design more robust. This process will involve several iterations, and we hope the community will engage with us to help test, provide feedback, and suggest improvements. Thanks in advance!
-
-<p align="center">
-  <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/miniaturizedPCB.png"/>
 </p>
 
 ## License

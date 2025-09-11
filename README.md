@@ -9,6 +9,12 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
   </a>
 </p>
 
+**Now you don't need to open your console!!!**
+
+<p align="center">  
+    <img width="70%" src="https://github.com/odelot/nes-ra-adapter/blob/main/images/version1.0.png">  
+</p>
+
 ---
 
 ## Table of Contents
@@ -58,23 +64,31 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 
 | Part Name                        | Quantity   | Total Cost (USD)*    |
 |----------------------------------|------------|----------------------|
-| 72-pin slot**                    | 2x         | (2x ~$2.50) ~ $5.00  |
-| SN74HC4066***                    | 7x         | (7x ~$0.85) ~ $6.00  |
+| 72-pin slot                      | 1x         | ~ $2.50              |
+| SN74LVC1G3157DBVR                | 26x        | ~ $3.25              |
 | Raspberry Pi Pico (purple board) | 1x         | ~ $3.00              |
 | ESP32 C3 Supermini               | 1x         | ~ $2.50              |
 | LCD 240x240 driver ST7789        | 1x         | ~ $2.75              |
 | Buzzer 3V + Transistor BC548     | 1x         | ~ $1.25              |
-| **Total** (without PCB, 3D case) |            | ~ **$20.50**         |
+| Flat cable 20cm 1mm reverse 5pin | 1x         | ~ $0.20              |
+| M2 screw 6mm flat head with nut  | 10x        | ~ $0.30              |
+| M2 screw 10mm                    | 4x         | ~ $0.15              |
+| **Total** (without PCB, 3D case) |            | ~ **$15.95**         |
 
 \* Source: Aliexpress - 2025-03-29 <br/>
-\** In the miniaturized version, only 1 slot is needed <br/>
-\*** A more stable alternative to SN74HC4066 would be 26x SN74LVC1G3157DBVR (SMD) - see details [here](https://github.com/odelot/nes-ra-adapter/tree/main/hardware#sn74hc4066-vs-sn74lvc1g3157dbvr).
 
 ### Assemble the Circuit
 
-Currently, the project offers two options for circuit assembly:
-1. **Protoboard/Perfboard:** Assemble the circuit using a protoboard, following the schematic available in the `hardware` folder.
-2. **PCBs:** Order the PCBs (v0.1 or v0.2) using the files in the `hardware` folder for a more robust assembly.
+Starting from version 1.0, thanks to GH’s custom boards, you no longer need to open your console to use the adapter. Combined with the 3D-printed case I designed, the adapter works just like a GameGenie — simply plug it into the cartridge slot and you’re ready to go. A dedicated case for the top-loader model is also available.
+
+The adapter is built from two PCBs connected by a flat cable:
+
+  - Main board: houses 26 SMD analog switches (the most challenging part of soldering), a purple Raspberry Pi Pico RP2040, the cartridge slot, flat cable connector, and a few coupling capacitors.
+  - Secondary board: includes an ESP32 C3 Supermini, ST7789 LCD display, flat cable connector, buzzer, transistor, coupling capacitor, 10k and 1k resistors, plus an optional bi-color LED (green/red) with two 100k resistors, which can also be used as an alternative to the LCD.
+
+You’ll find everything you need to build it yourself:
+  - /hardware → schematic and Gerber files for PCB production
+  - /3d-parts → STL files for both front-loader and top-loader cases
 
 ### Update the Pico and ESP32 Firmware
 
@@ -113,7 +127,7 @@ The adapter uses two microcontrollers working together:
 - **Connectivity and Interface:** Provides Internet to the NES and manages a TFT screen to display achievements, along with a buzzer for sound effects.
 - **Configuration Management:** Stores Wi-Fi and RetroAchievements credentials in EEPROM; configuration is done via smartphone connected to the ESP32 access point.
 - **File System and Communication:** Uses LittleFS to store a hash table (CRC32 to MD5) for cartridge identification and game images.
-- **EXPERIMENTAL – Streams LCD content to a Web App** - Uses WebSocket and mDNS to serve a web app that mirrors the LCD display and shows additional achievement events that don’t fit on the physical screen. (More details available in the `misc` folder.) The web app becomes available as soon as the game image appears on the LCD and can be accessed at `http://nes-ra-adapter.local` — make sure your smartphone is connected to the same Wi-Fi network.
+- **Streams LCD content to a Web App** - Uses WebSocket and mDNS to serve a web app that mirrors the LCD display and shows additional achievement events that don’t fit on the physical screen. (More details available in the `misc` folder.) The web app becomes available as soon as the game image appears on the LCD and can be accessed at `http://nes-ra-adapter.local` — make sure your smartphone is connected to the same Wi-Fi network.
 
 ---
 
@@ -139,18 +153,9 @@ The adapter uses two microcontrollers working together:
 
 ---
 
-## Next Steps
-
-### 1 - Miniaturize the Circuit:
-Develop a board approximately the size of a Game Genie that fits into the NES 001 cartridge slot. Include a ground plane, decoupling capacitors, current-limiting resistors, and smaller traces to reduce interference.
-
-### 2 - Adapt the Case to the Miniaturized Circuit:
-Update the case (currently inspired by the Game Genie) to fit the new circuit layout.
-
----
-
 ## Version History
 
+- **Version 1.0 (2025-11-09)** - New miniaturized board and 3d case available - no need to open up the console. Minior changes in the frame detection heuristic. Optional Bicolor Status LED as a option to the LCD. Option to flip the LCD content (needed for the 1.0 case assembly)
 - **Version 0.7 (2025-07-09)** - Changes to the frame detection heuristic, using microseconds instead of milliseconds and doing frame skipping if necessary to stay as close as possible to the 60hz cadence (or 50hz, when handling a DEFINE during compilation).
 - **Version 0.6 (2025-06-25)** - Bug fix in serial comm on ESP32, "show password" feature for RA credentials during setup, filtering of some achievements directly in the RA API.
 - **Version 0.5 (2025-06-24)** - Hardcore mode enabled. LED status in a semaphore way (green, yellow, red) to make the LCD optional. Minor bug fixes.
@@ -186,16 +191,7 @@ Everyone is welcome to contribute!
 
 - **Q: So how can I get one?**
 - **A**: It's a DIY project — you can build it yourself!
-If you're not comfortable doing that, don’t worry: as seen with other open-source projects like the [GBSControl](https://github.com/ramapcsx2/gbs-control), [GB Interceptor](https://github.com/Staacks/gbinterceptor) and [Open Source Cartridge Reader](https://github.com/sanni/cartreader), the community often steps in to produce and sell units for those who don’t want to build their own.
-<br/>
-
-- **Q: Am I allowed to manufacture and sell it?**
-- **A**: Yes! Both the hardware and software licenses allow commercial use.
-Please note that the 3D-printed case files were created using Fusion 360 under a non-commercial license, but they can be redesigned in other software for commercial purposes.
-<br/>
-
-- **Q: Do I need to open my NES to use it?**
-- **A**: Our goal is for it to work like a Game Genie — a plug-and-play adapter that fits between the console and the cartridge, with no need to open the NES. However, current prototypes still require opening the console.
+If you're not comfortable doing that, don’t worry: as seen with other open-source projects like the [GBSControl](https://github.com/ramapcsx2/gbs-control), [GB Interceptor](https://github.com/Staacks/gbinterceptor) and [Open Source Cartridge Reader](https://github.com/sanni/cartreader), the community often steps in to produce and sell units for those who don’t want to build their own. Also, the guy that mods your console is very capable of building one for you.
 <br/>
 
 - **Q: Do I need to modify my NES in any way?**
@@ -208,7 +204,7 @@ If you ever need to configure it, you can do so from your smartphone. All achiev
 <br/>
 
 - **Q: Will the adapter work with EverDrives?**
-- **A**: The adapter needs to read the cartridge to identify the game, but when using an EverDrive, it reads the EverDrive’s firmware instead of the game itself. That’s one of the reasons why supporting EverDrives is not currently possible.
+- **A**: No. The adapter needs to read the cartridge to identify the game, but when using an EverDrive, it reads the EverDrive’s firmware instead of the game itself. That’s one of the reasons why supporting EverDrives is not currently possible.
 <br/>
 
 - **Q: Will it work with Japanese Famicom systems?**

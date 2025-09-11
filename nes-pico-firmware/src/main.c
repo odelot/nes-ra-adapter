@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-07-09
-   Version:          0.7
+   Date:             2025-09-11
+   Version:          1.0
    By odelot
 
    Libs used:
@@ -82,7 +82,7 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "0.7"
+#define FIRMWARE_VERSION "1.0"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -133,7 +133,6 @@
 #else
 #define FRAME_TIME_US 20000 // 1000000 / 50 = 20000
 #endif
-
 
 /**
  * EXPERIMENTAL - enable internal web app (uncomment to enable)
@@ -1048,7 +1047,7 @@ static void achievement_status(const rc_client_event_t *event)
         }
     }
 
-    fifo_enqueue(&achievements_fifo, achievement_data);   
+    fifo_enqueue(&achievements_fifo, achievement_data);
 }
 
 // rcheevos event handler - used to enqueue the achievements the user won to be sent to the ESP32
@@ -1069,7 +1068,7 @@ static void event_handler(const rc_client_event_t *event, rc_client_t *client)
         break;
 #endif
     default:
-        // printf("Unhandled event %d\n", event->type); //debug 
+        // printf("Unhandled event %d\n", event->type); //debug
         break;
     }
 }
@@ -1152,7 +1151,7 @@ rc_client_t *initialize_retroachievements_client(rc_client_t *g_client, rc_clien
     // Provide a logging function to simplify debugging
     rc_client_enable_logging(g_client, RC_CLIENT_LOG_LEVEL_VERBOSE, log_message);
 
-    // Enable hardcore mode - we are on a real NES console and using a real cartridge and not a everdrive or game genie    
+    // Enable hardcore mode - we are on a real NES console and using a real cartridge and not a everdrive or game genie
     rc_client_set_hardcore_enabled(g_client, 1);
     return g_client;
 }
@@ -1296,6 +1295,8 @@ int main()
         }
         if (state == 8)
         {
+            u_int64_t now = time_us_64();                // get current time in microseconds
+            u_int64_t diff = now - last_frame_processed; 
             // read from circular buffer detectd memory writes
             if (memory_buffer_size() > 0)
             {
@@ -1314,22 +1315,21 @@ int main()
                     }
                     printf("\n");
                 }
-                u_int64_t now = time_us_64(); // get current time in microseconds
+                
                 // if memory address is 0x4014, we can assume a frame is being processed
                 if (memory.address == 0x4014)
                 {
-                    // best place to detect a frame so far
-                    u_int64_t diff = now - last_frame_processed; // debug
+                    // best place to detect a frame so far                    
                     // printf("F: %d, diff: %llu us\n", frame_counter, diff); // debug
-                    if (diff > (FRAME_TIME_US - 667)) { // inside a frame window, so process the frame
+                    if (diff > (FRAME_TIME_US - 667))
+                    { // inside a frame window, so process the frame
+                        last_frame_processed = now;
+                        diff = 0; 
                         rc_client_do_frame(g_client);
-                        last_frame_processed = now; // get current time in microseconds
-                    } 
+                    }
                     // else {
-                        //printf("s"); // debug - updated oam register too early - skip frame 
-                    //}
-                    
-                    
+                    //     //printf("s"); // debug - updated oam register too early - skip frame
+                    // }
 
                     // memory dump during a frame for DEBUG
                     // printf("_F");
@@ -1372,27 +1372,26 @@ int main()
                         }
                     }
                 }
-
-                // simulate a frame every 16750ms (for 60hz) if we cannot detect any frame using the OAMDMA address monitoring
-                // example of need: punchout / chip n dale rescue rangers
-                
-                if ((now - last_frame_processed) > (FRAME_TIME_US + 85) ) // a frame takes 16666 microsecond in 60hz and 20000 microseconds in 50hz
-                {
-                    // printf("*"); 
-                    rc_client_do_frame(g_client);
-                    last_frame_processed = now;
-                    // memory dump during a frame for DEBUG
-                    // for (int i = 0; i < unique_memory_addresses_count; i += 1)
-                    // {
-                    //     //  "0xH006c=0_0xH0029=33_0xP0101>d0xP0101", // mega man 5
-                    //     if (unique_memory_addresses[i] == 0x006C || unique_memory_addresses[i] == 0x0029 || unique_memory_addresses[i] == 0x0101)
-                    //     {
-                    //         printf("%03X ", memory_data[i]);
-                    //     }
-                    // }
-                    // printf ("\n");
-                }
             }
+            // simulate a frame every 16750ms (for 60hz) if we cannot detect any frame using the OAMDMA address monitoring
+            // example of need: punchout / chip n dale rescue rangers
+            if (diff > (FRAME_TIME_US + 85)) // a frame takes 16666 microsecond in 60hz and 20000 microseconds in 50hz
+            {
+                last_frame_processed = now;
+                rc_client_do_frame(g_client);
+
+                // memory dump during a frame for DEBUG
+                // for (int i = 0; i < unique_memory_addresses_count; i += 1)
+                // {
+                //     //  "0xH006c=0_0xH0029=33_0xP0101>d0xP0101", // mega man 5
+                //     if (unique_memory_addresses[i] == 0x006C || unique_memory_addresses[i] == 0x0029 || unique_memory_addresses[i] == 0x0101)
+                //     {
+                //         printf("%03X ", memory_data[i]);
+                //     }
+                // }
+                // printf ("\n");
+            }
+
         }
         // handle UART communication, byte by byte
         if (uart_is_readable(UART_ID))

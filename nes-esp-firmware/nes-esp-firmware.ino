@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2025-07-09
-   Version:          0.7
+   Date:             2025-09-11
+   Version:          1.0
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -46,15 +46,43 @@
 
 **********************************************************************************/
 
+/*********************************************************************************
+* FEATURE FLAGS
+**********************************************************************************/
+
+#define ENABLE_RESET 1
+
+/**
+ * defines to use a aws lambda function to shrink the JSON response with the list of achievements
+ * remember: you need to deploy the lambda and inform its URL
+ */
+
+#define ENABLE_SHRINK_LAMBDA 0 // 0 - disable / 1 - enable
+#define SHRINK_LAMBDA_URL "https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/default/NES_RA_ADAPTER?"
+
+/**
+ enable internal web app (comment to disable)
+*/
+
+#define ENABLE_INTERNAL_WEB_APP_SUPPORT
+
+/**
+* enable LCD (comment to disable)
+*/
+#define ENABLE_LCD
+
+/**
+* flip screen upside down
+*/
+#define FLIP_SCREEN
+
 #include <WiFiManager.h>
 #include <EEPROM.h>
-#include <PNGdec.h>
+
 #include <StreamString.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <time.h>
-#include "SPI.h"
-#include <TFT_eSPI.h>
 #include "HardwareSerial.h"
 #include "LittleFS.h"
 #include <esp_sleep.h>
@@ -65,7 +93,13 @@
 #include <Wire.h>
 #include <Ticker.h>
 
-#define VERSION "0.7"
+#ifdef ENABLE_LCD
+  #include <PNGdec.h>
+  #include "SPI.h"
+  #include <TFT_eSPI.h>
+#endif
+
+#define VERSION "1.0"
 
 /**
  * defines for the LittleFS
@@ -147,22 +181,6 @@
 // pin to the reset button
 #define RESET_PIN 8
 
-#define ENABLE_RESET 1
-
-/**
- * defines to use a aws lambda function to shrink the JSON response with the list of achievements
- * remember: you need to deploy the lambda and inform its URL
- */
-
-#define ENABLE_SHRINK_LAMBDA 0 // 0 - disable / 1 - enable
-#define SHRINK_LAMBDA_URL "https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/default/NES_RA_ADAPTER?"
-
-/**
- * EXPERIMENTAL - enable internal web app (uncomment to enable)
- */
-
-#define ENABLE_INTERNAL_WEB_APP_SUPPORT
-
 // types for http request
 typedef enum HttpRequestMethod
 {
@@ -224,6 +242,8 @@ struct Led {
 Led ledRed   = {LED_STATUS_RED_PIN, LED_OFF, false, Ticker()};
 Led ledGreen = {LED_STATUS_GREEN_PIN, LED_OFF, false, Ticker()};
 
+
+#ifdef ENABLE_LCD
 // global variables for the PNG decoder
 PNG png;
 int16_t x_pos = 0;
@@ -232,6 +252,7 @@ File png_file;
 
 // global variables for the TFT screen
 TFT_eSPI tft = TFT_eSPI();
+#endif
 
 // global variables for the achievements fifo
 achievements_FIFO_t achievements_fifo;
@@ -729,6 +750,7 @@ void clean_json_field_array_value(String &json, const String &field_to_remove)
   json.remove(write_index);
 }
 
+#ifdef ENABLE_LCD
 /*
  * functions related to the png decoder and file management
  */
@@ -767,6 +789,38 @@ int32_t png_seek(PNGFILE *page, int32_t position)
   page = page; // Avoid warning
   return png_file.seek(position);
 }
+
+// callback function to draw pixels to the display
+void png_draw(PNGDRAW *pDraw)
+{
+  uint16_t line_buffer[MAX_IMAGE_WIDTH];
+  png.getLineAsRGB565(pDraw, line_buffer, PNG_RGB565_BIG_ENDIAN, 0xffffffff);
+  tft.pushImage(x_pos, y_pos + pDraw->y, pDraw->iWidth, 1, line_buffer);
+}
+
+void initLCD () {
+  tft.begin(); // initialize the TFT screen
+  #ifdef FLIP_SCREEN
+    tft.setRotation(2);
+  #endif
+
+  //  draw the title screen
+  tft.fillScreen(TFT_YELLOW);
+  tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
+
+  tft.setCursor(10, 10, 4);
+  tft.setTextSize(1);
+  tft.println("RetroAchievements");
+  tft.setCursor(140, 40, 4);
+  tft.println("Adapter");
+
+  tft.fillRoundRect(16, 76, 208, 128, 15, TFT_BLUE);
+  tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
+
+  tft.setCursor(75, 220, 2);
+  tft.println("by Odelot & GH");
+}
+#endif
 
 /**
  * functions related to manage the fifo of achievements
@@ -901,6 +955,7 @@ void play_sound_achievement_unlocked()
   }
 }
 
+
 /**
  * functions related to the TFT screen and PNG decoder
  */
@@ -914,6 +969,7 @@ void print_line(String text, int line, int line_status)
 // print a line of text in the TFT screen with a delta (left to right)
 void print_line(String text, int line, int line_status, int delta)
 {
+  #ifdef ENABLE_LCD
   tft.setTextSize(1);
   tft.setTextColor(TFT_WHITE, TFT_BLACK, true);
   tft.setCursor(20, 90 + line * 22, 2);
@@ -936,6 +992,7 @@ void print_line(String text, int line, int line_status, int delta)
   {
     tft.fillCircle(32, 98 + line * 22, 7, TFT_GREEN);
   }
+  #endif
 }
 
 // clean the text in the TFT screen
@@ -948,10 +1005,15 @@ void clean_screen_text()
   print_line("", 4, 0);
 }
 
+
+
+
+
 // show the title screen
 void show_title_screen()
 {
   setSemaphore(LED_ON, LED_GREEN);
+#ifdef ENABLE_LCD  
   analogWrite(LCD_BRIGHTNESS_PIN, 100); // set the brightness of the TFT screen
   setCpuFrequencyMhz(160);
   tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
@@ -987,19 +1049,21 @@ void show_title_screen()
   }
   already_showed_title_screen = true;
   setCpuFrequencyMhz(80);
+#endif
 }
 
 // show the achievement screen
 void show_achievement(achievements_t achievement)
 {
   setSemaphore(LED_BLINK_FAST, LED_GREEN);
-  analogWrite(LCD_BRIGHTNESS_PIN, 200); // set the brightness of the TFT screen
+  
 #ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
   char aux[256];
   sprintf(aux, "A=%s;%s;%s", "0", achievement.title.c_str(), achievement.url.c_str());
   send_ws_data(aux);
 #endif
-
+#ifdef ENABLE_LCD  
+  analogWrite(LCD_BRIGHTNESS_PIN, 200); // set the brightness of the TFT screen
   // if achievement title is longer than 26 chars, add ... at the end
   if (achievement.title.length() > 26)
   {
@@ -1036,15 +1100,9 @@ void show_achievement(achievements_t achievement)
   go_back_to_title_screen = true;
   go_back_to_title_screen_timestamp = millis();
   setCpuFrequencyMhz(80);
+#endif
 }
 
-// callback function to draw pixels to the display
-void png_draw(PNGDRAW *pDraw)
-{
-  uint16_t line_buffer[MAX_IMAGE_WIDTH];
-  png.getLineAsRGB565(pDraw, line_buffer, PNG_RGB565_BIG_ENDIAN, 0xffffffff);
-  tft.pushImage(x_pos, y_pos + pDraw->y, pDraw->iWidth, 1, line_buffer);
-}
 
 /**
  * functions related to the EEPROM
@@ -1588,7 +1646,7 @@ int perform_http_request(
     HTTPClient https;
     https.setTimeout(timeoutMs);
     https.begin(client, url);
-    const char user_agent[] = "NES_RA_ADAPTER/0.7 rcheevos/11.6";
+    const char user_agent[] = "NES_RA_ADAPTER/1.0 rcheevos/11.6";
     https.setUserAgent(user_agent);
     if (method == GET)
     {
@@ -1658,6 +1716,7 @@ int perform_http_request(
 // arduino-esp32 entry point
 void setup()
 {
+  
   setCpuFrequencyMhz(80);
   // disable i2c
   Wire.end();
@@ -1702,7 +1761,7 @@ void setup()
 
   fifo_init(&achievements_fifo); // initialize the achievement fifo
 
-  tft.begin(); // initialize the TFT screen
+  
 
   // delay(250);
   if (!LittleFS.begin(FORMAT_LITTLEFS_IF_FAILED)) // Initialise LittleFS
@@ -1717,21 +1776,9 @@ void setup()
   sprintf(esp_version, "ESP32_VERSION=%s\r\n", VERSION);
   Serial0.print(esp_version); // send the version to the pico - debug
 
-  //  draw the title screen
-  tft.fillScreen(TFT_YELLOW);
-  tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
-
-  tft.setCursor(10, 10, 4);
-  tft.setTextSize(1);
-  tft.println("RetroAchievements");
-  tft.setCursor(140, 40, 4);
-  tft.println("Adapter");
-
-  tft.fillRoundRect(16, 76, 208, 128, 15, TFT_BLUE);
-  tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
-
-  tft.setCursor(75, 220, 2);
-  tft.println("by Odelot & GH");
+#ifdef ENABLE_LCD
+  initLCD ();
+#endif
 
   // check if the reset button is pressed and handle the reset routine
   handle_reset();
@@ -1869,8 +1916,7 @@ void setup()
 
   delay(250);                   // make sure pico restarted
   Serial.print(token_and_user); // debug
-  Serial0.print(token_and_user);
-  Serial.print(F("TFT_INIT\r\n")); // debug
+  Serial0.print(token_and_user);  
   state = 0;
 
   // modem sleep
@@ -1903,6 +1949,7 @@ void loop()
     go_back_to_title_screen = false;
     if (fifo_is_empty(&achievements_fifo))
     {
+      
       show_title_screen();
     }
   }
@@ -2024,7 +2071,7 @@ void loop()
           data.trim();
           data += "&f=3"; // filter achievements with flag = 5
           // because of this amount of RAM we can only enable the websocket after get the achievement list
-          reserve = 65250; // bold - need more tests, but at least supports Final Fantasy for now - could allocate 65250 in tests
+          reserve = 65250; // bold - need more tests, but at least supports Final Fantasy for now - could allocate 65250 in tests      
           if (ENABLE_SHRINK_LAMBDA)
           {
             reserve = 32768;
