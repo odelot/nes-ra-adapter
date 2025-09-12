@@ -12,7 +12,7 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
 **Now you don't need to open your console!!!**
 
 <p align="center">  
-    <img width="70%" src="https://github.com/odelot/nes-ra-adapter/blob/main/images/version1.0.png">  
+    <img width="70%" src="https://github.com/odelot/nes-ra-adapter/blob/main/images/version1.0.jpg">  
 </p>
 
 ---
