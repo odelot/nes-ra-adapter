@@ -75,7 +75,8 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 | M2 screw 10mm                                         | 4x         | ~ $0.15              |
 | FPC FFC SMT SMD Flat Cable Connector 1mm Pitch 5 pins | 2x         | ~ $0.30              |
 | PCB set                                               | 1x         | ~ $2.00              |
-| **Total** (without 3D case)                           |            | ~ **$17.00**         |
+| 3d print parts set (case) - etsy                      | 1x         | ~ $15.00             |
+| **Total** (without shipping fee and import taxes)     |            | ~ **$32.00**         |
 
 \* Source: Aliexpress - 2025-03-29 <br/>
 
