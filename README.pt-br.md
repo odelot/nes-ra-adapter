@@ -62,18 +62,20 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 
 ### Adquira as partes
 
-| Nome da Parte                    | Quantidade | Custo (USD)*         |
-|----------------------------------|------------|----------------------|
-| 72-pin slot                      | 1x         | ~ $2.50              |
-| SN74LVC1G3157DBVR                | 26x        | ~ $3.25              |
-| Raspberry Pi Pico (purple board) | 1x         | ~ $3.00              |
-| ESP32 C3 Supermini               | 1x         | ~ $2.50              |
-| LCD 240x240 driver ST7789        | 1x         | ~ $2.75              |
-| Buzzer 3V + Transistor BC548     | 1x         | ~ $1.25              |
-| Flat cable 20cm 1mm reverse 5pin | 1x         | ~ $0.20              |
-| M2 screw 6mm flat head with nut  | 10x        | ~ $0.30              |
-| M2 screw 10mm                    | 4x         | ~ $0.15              |
-| **Total** (without PCB, 3D case) |            | ~ **$15.95**         |
+| Nome da Parte                                         | Quantidade | Custo (USD)*         |
+|-------------------------------------------------------|------------|----------------------|
+| 72-pin slot                                           | 1x         | ~ $1.25              |
+| SN74LVC1G3157DBVR                                     | 26x        | ~ $3.25              |
+| Raspberry Pi Pico (purple board)                      | 1x         | ~ $3.00              |
+| ESP32 C3 Supermini                                    | 1x         | ~ $2.50              |
+| LCD 240x240 driver ST7789                             | 1x         | ~ $2.75              |
+| Buzzer 3V + Transistor BC548                          | 1x         | ~ $1.25              |
+| Flat cable 20cm 1mm reverse 5pin                      | 1x         | ~ $0.20              |
+| M2 screw 6mm flat head with nut                       | 10x        | ~ $0.30              |
+| M2 screw 10mm                                         | 4x         | ~ $0.15              |
+| FPC FFC SMT SMD Flat Cable Connector 1mm Pitch 5 pins | 2x         | ~ $0.30              |
+| PCB set                                               | 1x         | ~ $2.00              |
+| **Total** (without 3D case)                           |            | ~ **$17.00**         |
 
 \* Fonte: Aliexpress - 2025-03-29 <br/>
 
