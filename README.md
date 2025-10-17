@@ -79,8 +79,9 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 | Electrolytic capacitor 10µF 16V                       | 4x         |                      |
 | 1k ohm resistor (R1)                                  | 1x         |                      |
 | 10k ohm resistor (R2)                                 | 1x         |                      |
+| Push Button Switch 6x6x6                              | 1x         |                      |
 | 100 ohm resistor (R3 and R4) - optional               | 2x         |                      |
-| Bi-color LED (Green / Red, Common Cathode) - optional | 1x     |                      |
+| Bi-color LED (Green / Red, Common Cathode) - optional | 1x         |                      |
 | **Total** (without shipping fee and import taxes)     |            | ~ **$32.00**         |
 
 \* Source: Aliexpress - 2025-03-29 <br/>

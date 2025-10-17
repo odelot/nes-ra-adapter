@@ -79,6 +79,7 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 | capacitor eletrolitico 10uf 16v                       | 4x         |                      |
 | 1k ohm resistor   (R1)                                | 1x         |                      |
 | 10k ohm resistor  (R2)                                | 1x         |                      |
+| Push Button Switch 6x6x6                              | 1x         |                      |
 | 100 ohm resistor  (R3 e R4) - opcionais               | 2x         |                      |
 | LED Bicolor Verde e Vermelho Catodo Comum - opcional  | 1x         |                      |
 | **Total** (sem frete e impostos de importação)        |            | ~ **$32.00**         |
