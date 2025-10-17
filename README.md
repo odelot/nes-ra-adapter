@@ -76,6 +76,11 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 | FPC FFC SMT SMD Flat Cable Connector 1mm Pitch 5 pins | 2x         | ~ $0.30              |
 | PCB set                                               | 1x         | ~ $2.00              |
 | 3d print parts set (case) - etsy                      | 1x         | ~ $15.00             |
+| Electrolytic capacitor 10µF 16V                       | 4x         |                      |
+| 1k ohm resistor (R1)                                  | 1x         |                      |
+| 10k ohm resistor (R2)                                 | 1x         |                      |
+| 100 ohm resistor (R3 and R4) - optional               | 2x         |                      |
+| Bi-color LED (Green / Red, Common Cathode) - optional | 1x     |                      |
 | **Total** (without shipping fee and import taxes)     |            | ~ **$32.00**         |
 
 \* Source: Aliexpress - 2025-03-29 <br/>
