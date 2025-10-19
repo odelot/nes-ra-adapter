@@ -80,6 +80,7 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 | 1k ohm resistor (R1)                                  | 1x         |                      |
 | 10k ohm resistor (R2)                                 | 1x         |                      |
 | Push Button Switch 6x6x6                              | 1x         |                      |
+| 90º degree femele header pins (to connect the LCD)    | 1x         |                      |
 | 100 ohm resistor (R3 and R4) - optional               | 2x         |                      |
 | Bi-color LED (Green / Red, Common Cathode) - optional | 1x         |                      |
 | **Total** (without shipping fee and import taxes)     |            | ~ **$32.00**         |
