@@ -95,6 +95,10 @@ O adaptador é composto por duas PCBs conectadas por um cabo flat:
   - **Placa principal**: possui 26 chaves analógicas SMD (a parte mais desafiadora da solda), um Raspberry Pi Pico RP2040 roxo, o slot de cartucho, conector do cabo flat e alguns capacitores de acoplamento.
   - **Placa secundária**: inclui um ESP32 C3 Supermini, display LCD ST7789, buzzer, transistor, capacitor de acoplamento, resistores de 10k e 1k, além de um LED bicolor opcional (verde/vermelho) com dois resistores de 100k, que também pode ser usado como alternativa ao LCD.
 
+**Sobre a espessura da placa de circuito impresso** - As placas de circuito impresso dos cartuchos de NES têm uma espessura de 1,2 mm. A placa do GameGenie tem uma espessura de 1,6 mm. Após alguns testes, aqui está o resultado:
+  - **NES Torradeira**: peça a placa de circuito impresso com uma espessura de 1,6 mm, como a GameGenie.
+  - **NES Top Loader**: peça a placa de circuito impresso com uma espessura de 1,2 mm, como a de um cartucho de NES original.
+
 Tudo o que você precisa para montar está disponível no repositório:
   - **/hardware** → esquema e arquivos Gerber para produção das PCBs
   - **/3d-parts** → arquivos STL para os cases das versões front-loader e top-loader
