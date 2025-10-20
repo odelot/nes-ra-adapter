@@ -96,6 +96,10 @@ The adapter is built from two PCBs connected by a flat cable:
   - Main board: houses 26 SMD analog switches (the most challenging part of soldering), a purple Raspberry Pi Pico RP2040, the cartridge slot, flat cable connector, and a few coupling capacitors.
   - Secondary board: includes an ESP32 C3 Supermini, ST7789 LCD display, flat cable connector, buzzer, transistor, coupling capacitor, 10k and 1k resistors, plus an optional bi-color LED (green/red) with two 100k resistors, which can also be used as an alternative to the LCD.
 
+**About PCB Thickness** - NES Cartridge PCBs has a board thickness of 1.2mm. GameGenie has a board thickness of 1.6mm. After some tests, here it is the deal:
+  - NES Front Loader: order the PCB with a thickness of 1.6mm like GameGenie
+  - NES Top Loader: order the PCB with a thickness of 1.2mm like a original NES Cartridge    
+
 You’ll find everything you need to build it yourself:
   - /hardware → schematic and Gerber files for PCB production
   - /3d-parts → STL files for both front-loader and top-loader cases
