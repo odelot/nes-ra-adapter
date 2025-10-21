@@ -91,14 +91,16 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 
 Starting from version 1.0, thanks to GH’s custom boards, you no longer need to open your console to use the adapter. Combined with the 3D-printed case I designed, the adapter works just like a GameGenie — simply plug it into the cartridge slot and you’re ready to go. A dedicated case for the top-loader model is also available.
 
+**Assembly Video Guide (with timecode)** - [https://www.youtube.com/watch?v=4uHbj2ckqv0](https://www.youtube.com/watch?v=4uHbj2ckqv0)
+
 The adapter is built from two PCBs connected by a flat cable:
 
-  - Main board: houses 26 SMD analog switches (the most challenging part of soldering), a purple Raspberry Pi Pico RP2040, the cartridge slot, flat cable connector, and a few coupling capacitors.
-  - Secondary board: includes an ESP32 C3 Supermini, ST7789 LCD display, flat cable connector, buzzer, transistor, coupling capacitor, 10k and 1k resistors, plus an optional bi-color LED (green/red) with two 100k resistors, which can also be used as an alternative to the LCD.
+  - **Main board**: houses 26 SMD analog switches (the most challenging part of soldering), a purple Raspberry Pi Pico RP2040, the cartridge slot, flat cable connector, and a few coupling capacitors.
+  - **Secondary board**: includes an ESP32 C3 Supermini, ST7789 LCD display, flat cable connector, buzzer, transistor, coupling capacitor, 10k and 1k resistors, plus an optional bi-color LED (green/red) with two 100k resistors, which can also be used as an alternative to the LCD.
 
 **About PCB Thickness** - NES Cartridge PCBs has a board thickness of 1.2mm. GameGenie has a board thickness of 1.6mm. After some tests, here it is the deal:
-  - NES Front Loader: order the PCB with a thickness of 1.6mm like GameGenie
-  - NES Top Loader: order the PCB with a thickness of 1.2mm like a original NES Cartridge    
+  - **NES Front Loader**: order the PCB with a thickness of 1.6mm like GameGenie
+  - **NES Top Loader**: order the PCB with a thickness of 1.2mm like a original NES Cartridge    
 
 You’ll find everything you need to build it yourself:
   - /hardware → schematic and Gerber files for PCB production
