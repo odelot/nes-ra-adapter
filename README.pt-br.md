@@ -171,7 +171,7 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 ## Histórico de Versões
 
-- **Version 1.0 (2025-11-09)** - Nova versão miniaturizada da placa e do case 3d - não é necessário abrir o console. Pequenas mudanças na heuristica de detecção de frames. LED Bicolor (opcional) caso queira substituir a tela LCD. Opção de inverter o conteudo da tela LCD durante a compilação do firmware do ESP32 (necessario para a montagem do case)
+- **Version 1.0 (2025-09-11)** - Nova versão miniaturizada da placa e do case 3d - não é necessário abrir o console. Pequenas mudanças na heuristica de detecção de frames. LED Bicolor (opcional) caso queira substituir a tela LCD. Opção de inverter o conteudo da tela LCD durante a compilação do firmware do ESP32 (necessario para a montagem do case)
 - **Versão 0.7 (2025-07-09)** - Mudanças na heuristica de detecção de frame, usando microsegundos ao invés de milesegundos e fazendo frame skip, se necessário, para ficar o mais proximo possivel da cadencia de 60hz (ou 50hz, ao manipular um DEFINE durante a compilação).
 - **Versão 0.6 (2025-06-25)** - Correção de bug na comunicação serial no ESP32, recurso "show password" para credenciais do RA durante a configuração, filtragem de algumas conquistas diretamente na API do RA.
 - **Versão 0.5 (2025-06-24)** - Modo hardcore ativado. LED de status no formato de semáforo (verde, amarelo, vermelho) para tornar o LCD opcional. Pequenas correções de bugs.
