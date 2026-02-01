@@ -345,7 +345,7 @@ size_t serial_buffer_len = 0;
 
 // Flexible buffer for large HTTP responses 
 #define LARGE_BUFFER_SIZE 102400 // 100 KB 
-#define SMALL_BUFFER_SIZE 1024 // 1 KB
+#define SMALL_BUFFER_SIZE 10240 // 10 KB
 CharBufferStream response;
 // HTTP client global to reuse SSL buffers (avoids fragmentation)
 NetworkClientSecure globalSecureClient;
