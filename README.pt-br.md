@@ -171,7 +171,12 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 ## Histórico de Versões
 
-- **Version 1.0 (2025-09-11)** - Nova versão miniaturizada da placa e do case 3d - não é necessário abrir o console. Pequenas mudanças na heuristica de detecção de frames. LED Bicolor (opcional) caso queira substituir a tela LCD. Opção de inverter o conteudo da tela LCD durante a compilação do firmware do ESP32 (necessario para a montagem do case)
+- **Versão 1.1 (2026-02-01)** - 
+  - Grande otimização no uso de RAM do ESP32 (mais de 40% de economia), aumentando o tamanho máximo do payload e permitindo suporte a mais jogos, incluindo Super Mario Bros. 3, que havia deixado de ser compatível na versão 1.0 após receber novas conquistas no final de 2025.
+  - Adicionado um indicador de progresso no canto superior esquerdo da tela (conquistas obtidas / conquistas totais) e um indicador de intensidade do sinal Wi-Fi no canto superior direito.
+  - Implementada uma rotina de celebração quando um jogo é totalmente é masterizado.
+  - Correção de pequenos bugs. Agora não é mais necessário desligar e ligar o console após configurar o adaptador.
+- **Versão 1.0 (2025-09-11)** - Nova versão miniaturizada da placa e do case 3d - não é necessário abrir o console. Pequenas mudanças na heuristica de detecção de frames. LED Bicolor (opcional) caso queira substituir a tela LCD. Opção de inverter o conteudo da tela LCD durante a compilação do firmware do ESP32 (necessario para a montagem do case)
 - **Versão 0.7 (2025-07-09)** - Mudanças na heuristica de detecção de frame, usando microsegundos ao invés de milesegundos e fazendo frame skip, se necessário, para ficar o mais proximo possivel da cadencia de 60hz (ou 50hz, ao manipular um DEFINE durante a compilação).
 - **Versão 0.6 (2025-06-25)** - Correção de bug na comunicação serial no ESP32, recurso "show password" para credenciais do RA durante a configuração, filtragem de algumas conquistas diretamente na API do RA.
 - **Versão 0.5 (2025-06-24)** - Modo hardcore ativado. LED de status no formato de semáforo (verde, amarelo, vermelho) para tornar o LCD opcional. Pequenas correções de bugs.

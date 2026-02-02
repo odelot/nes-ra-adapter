@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2025-09-11
-   Version:          1.0
+   Date:             2026-02-01
+   Version:          1.1
    By odelot
 
    Libs used:
@@ -82,7 +82,7 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "1.0"
+#define FIRMWARE_VERSION "1.1"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
@@ -135,7 +135,7 @@
 #endif
 
 /**
- * EXPERIMENTAL - enable internal web app (uncomment to enable)
+ * enable internal web app support
  */
 
 #define ENABLE_INTERNAL_WEB_APP_SUPPORT
@@ -865,7 +865,7 @@ static uint32_t read_memory_do_nothing(uint32_t address, uint8_t *buffer, uint32
 }
 
 // add the OAMDMA address to the list of monitored addresses
-static uint32_t add_oamdma_address()
+static void add_oamdma_address()
 {
     uint8_t found = 0;
     uint16_t address = 0x4014;
@@ -897,11 +897,11 @@ static uint32_t read_memory_init(uint32_t address, uint8_t *buffer, uint32_t num
 
     for (int j = 0; j < num_bytes; j += 1)
     {
-        address += j;
+        uint16_t new_address = address + j;
         uint8_t found = 0;
         for (int i = 0; i < unique_memory_addresses_count; i += 1)
         {
-            if (address == unique_memory_addresses[i])
+            if (new_address == unique_memory_addresses[i])
             {
                 found = 1;
                 break;
@@ -909,14 +909,14 @@ static uint32_t read_memory_init(uint32_t address, uint8_t *buffer, uint32_t num
         }
         if (found == 0)
         {
-            printf("init address %p, num_bytes: %d\n", address, num_bytes);
+            printf("init address %p, num_bytes: %d\n", new_address, num_bytes);
             unique_memory_addresses_count += 1;
             unique_memory_addresses = (uint16_t *)realloc(unique_memory_addresses, unique_memory_addresses_count * sizeof(uint16_t));
-            unique_memory_addresses[unique_memory_addresses_count - 1] = address;
+            unique_memory_addresses[unique_memory_addresses_count - 1] = new_address;
         }
         else
         {
-            printf("init address %p, num_bytes: %d (already monitored)\n", address, num_bytes);
+            printf("init address %p, num_bytes: %d (already monitored)\n", new_address, num_bytes);
         }
         buffer[j] = 0;
     }
@@ -980,6 +980,17 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
         }
         rc_client_set_read_memory_function(g_client, read_memory_init);
         rc_client_do_frame(g_client); // to trigger the read_memory_init and capture the memory address of interest
+
+        // send achievement summary to ESP32 (after do_frame so unlocks are processed)
+        if (rc_client_is_game_loaded(g_client))
+        {
+            rc_client_user_game_summary_t summary;
+            rc_client_get_user_game_summary(g_client, &summary);
+            char aux[64];
+            sprintf(aux, "ACH_SUMMARY=%u;%u\r\n", summary.num_unlocked_achievements, summary.num_core_achievements);
+            printf(aux);
+            uart_puts(UART_ID, aux);
+        }
 
         // add OAM DMA address to the list of monitored addresses - useful to detect frames
         add_oamdma_address();
@@ -1126,7 +1137,7 @@ static void server_call(const rc_api_request_t *request,
     async_handlers[async_handlers_index].id = request_id;
     async_handlers[async_handlers_index].async_data.callback = callback;
     async_handlers[async_handlers_index].async_data.callback_data = callback_data;
-    async_handlers_index = async_handlers_index + 1 % MAX_ASYNC_CALLBACKS;
+    async_handlers_index = (async_handlers_index + 1) % MAX_ASYNC_CALLBACKS;
     request_id += 1;
     printf("REQ=%s\n", request->post_data); // DEBUG
     request_ongoing += 1;
@@ -1206,6 +1217,9 @@ int main()
 
     const char nes_pico_firmaware_version[] = "PICO_FIRMWARE_VERSION=%s\r\n";
     printf(nes_pico_firmaware_version, FIRMWARE_VERSION);
+
+    // Notify ESP32 that Pico is ready for communication
+    uart_puts(UART_ID, "PICO_READY\r\n");
 
     // debug info
     unsigned int frame_counter = 0;
@@ -1506,6 +1520,11 @@ int main()
                     printf("L:RESET\r\n");
                     // force pico reset - need to wait a while in the esp32
                     watchdog_reboot(0, 0, 0); // TODO: maybe let esp32 know PICO restarted
+                }
+                else if (prefix("SYNC", command)) // SYNC - handshake with ESP32
+                {
+                    printf("L:SYNC\r\n");
+                    uart_puts(UART_ID, "SYNC_ACK\r\n");
                 }
                 else if (prefix("READ_CRC", command))
                 {
