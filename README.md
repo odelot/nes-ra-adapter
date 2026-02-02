@@ -171,6 +171,11 @@ The adapter uses two microcontrollers working together:
 
 ## Version History
 
+- **Version 1.1 (2026-02-01)** 
+  - Major RAM usage optimization on the ESP32 (over 40% savings), increasing the maximum payload size and allowing support for more games, including Super Mario Bros. 3, which became unsupported in version 1.0 after receiving additional achievements at the end of 2025.
+  - Added a progress indicator in the upper-left corner of the screen (earned achievements / total achievements) and a Wi-Fi signal strength indicator in the upper-right corner.
+  - Implemented a celebration routine when a game is mastered.
+  - Fixed minor bugs. The console no longer needs to be powered off and on again after configuring the adapter.
 - **Version 1.0 (2025-09-11)** - New miniaturized board and 3d case available - no need to open up the console. Minior changes in the frame detection heuristic. Optional Bicolor Status LED as a option to the LCD. Option to flip the LCD content (needed for the 1.0 case assembly)
 - **Version 0.7 (2025-07-09)** - Changes to the frame detection heuristic, using microseconds instead of milliseconds and doing frame skipping if necessary to stay as close as possible to the 60hz cadence (or 50hz, when handling a DEFINE during compilation).
 - **Version 0.6 (2025-06-25)** - Bug fix in serial comm on ESP32, "show password" feature for RA credentials during setup, filtering of some achievements directly in the RA API.
