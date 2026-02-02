@@ -171,6 +171,12 @@
 #define NOTE_E7 2637
 #define NOTE_F7 2794
 #define NOTE_G7 3136
+#define NOTE_B4   494
+#define NOTE_FS5  740
+#define NOTE_C5  523
+#define NOTE_GS4 415
+#define NOTE_AS4 466
+
 
 #define SOUND_PIN 10
 
@@ -1030,6 +1036,73 @@ void play_success_sound()
   noTone(SOUND_PIN);
 }
 
+
+// play a sound to indicate a success (FF Victory Fanfare)
+void play_victory_sound()
+{
+  // Timing constants for the melody
+  const int BIG_GAP   = 45;   // big gap 
+  const int NOTE_GAP  = 30;   // normal gap between notes
+  const int SIXTEENTH = 100;
+  const int EIGHTH    = 200;
+  const int QUARTER   = 400;
+  const int DOTTED_Q  = 600;
+  const int HALF      = 800;
+  
+  // Intro: C C C C 
+  tone(SOUND_PIN, NOTE_C5);
+  delay(SIXTEENTH);
+  noTone(SOUND_PIN);
+  delay(BIG_GAP);
+  
+  tone(SOUND_PIN, NOTE_C5);
+  delay(SIXTEENTH);
+  noTone(SOUND_PIN);
+  delay(BIG_GAP);
+  
+  tone(SOUND_PIN, NOTE_C5);
+  delay(SIXTEENTH);
+  noTone(SOUND_PIN);
+  delay(BIG_GAP);
+  
+   
+  // C (long note)
+  tone(SOUND_PIN, NOTE_C5);
+  delay(DOTTED_Q);
+  noTone(SOUND_PIN);
+  delay(NOTE_GAP);
+  
+  // Ab (quarter)
+  tone(SOUND_PIN, NOTE_GS4);
+  delay(QUARTER);
+  noTone(SOUND_PIN);
+  delay(NOTE_GAP);
+  
+  // Bb (quarter)
+  tone(SOUND_PIN, NOTE_AS4);
+  delay(QUARTER);
+  noTone(SOUND_PIN);
+  delay(NOTE_GAP);
+  
+  // C (8th)
+  tone(SOUND_PIN, NOTE_C5);
+  delay(EIGHTH);
+  noTone(SOUND_PIN);
+  delay(SIXTEENTH + NOTE_GAP); // rest
+  
+  // Bb (16th)
+  tone(SOUND_PIN, NOTE_AS4);
+  delay(SIXTEENTH);
+  noTone(SOUND_PIN);
+  delay(NOTE_GAP);
+  
+  // C (hold - final note)
+  tone(SOUND_PIN, NOTE_C5);
+  delay(HALF + QUARTER);
+  noTone(SOUND_PIN);
+
+}
+
 // play a sound to indicate an error
 void play_error_sound()
 {
@@ -1077,15 +1150,25 @@ void play_sound_achievement_unlocked()
 // print a line of text in the TFT screen
 void print_line(const char* text, int line, int line_status)
 {
-  print_line(text, line, line_status, 0);
+  print_line(text, line, line_status, 0, TFT_BLACK);
+}
+
+// print a line of text in the TFT screen
+void print_line_bgcolor(const char* text, int line, int line_status, int color)
+{
+  print_line(text, line, line_status, 0, color);
+}
+
+void print_line(const char* text, int line, int line_status, int delta) {
+  print_line(text, line, line_status, delta, TFT_BLACK);
 }
 
 // print a line of text in the TFT screen with a delta (left to right)
-void print_line(const char* text, int line, int line_status, int delta)
+void print_line(const char* text, int line, int line_status, int delta, int color)
 {
   #ifdef ENABLE_LCD
   tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK, true);
+  tft.setTextColor(TFT_WHITE, color, true);
   tft.setCursor(20, 90 + line * 22, 2);
   tft.println("                                 ");
   tft.setCursor(46 + delta, 90 + line * 22, 2);
@@ -1231,33 +1314,86 @@ void show_achievement(achievements_t achievement)
   }
 
   setCpuFrequencyMhz(160);
-  tft.fillRoundRect(20, 80, 200, 120, 12, TFT_BLACK);
-  print_line("New Achievement Unlocked!", 0, 0);
-  print_line("", 1, -1);
-  print_line("", 2, -1);
-  print_line("", 3, -1);
-  print_line(achievement.title.c_str(), 4, -1);
-  Serial.println(achievement.title);
-  x_pos = 50;
-  y_pos = 110;
+  
+  // Download achievement image first
   char file_name[64];
   sprintf(file_name, "/achievement_%d.png", achievement.id);
   try_download_file(achievement.url, file_name);
-  int16_t rc = png->open(file_name, png_open, png_close, png_read, png_seek, png_draw);
-  if (rc == PNG_SUCCESS)
+  
+  // Helper lambda to redraw the achievement screen with a specific background color
+  auto redrawAchievementScreen = [&](uint16_t bgColor) {
+    tft.fillRoundRect(20, 80, 200, 120, 12, bgColor);
+    print_line_bgcolor("New Achievement Unlocked!", 0, 0, bgColor);
+    print_line_bgcolor("", 1, -1, bgColor);
+    print_line_bgcolor("", 2, -1, bgColor);
+    print_line_bgcolor("", 3, -1, bgColor);
+    print_line_bgcolor(achievement.title.c_str(), 4, -1, bgColor);
+    
+    // Redraw the achievement image
+    x_pos = 50;
+    y_pos = 110;
+    int16_t rc = png->open(file_name, png_open, png_close, png_read, png_seek, png_draw);
+    if (rc == PNG_SUCCESS)
+    {
+      tft.startWrite();
+      png->decode(NULL, 0);
+      tft.endWrite();
+      png->close();
+    }
+  };
+  
+  // Initial draw with black background
+  redrawAchievementScreen(TFT_BLACK);
+  Serial.println(achievement.title);
+  
+  // Check if game was mastered (all achievements unlocked)
+  //if (unlocked_achievements == 1) //test
+  if (unlocked_achievements > 0 && unlocked_achievements == total_achievements)
   {
-    Serial.print(F("Successfully opened png file"));
-    Serial.print(F("image specs: (")); Serial.print(png->getWidth()); Serial.print(F(" x ")); Serial.print(png->getHeight());
-    Serial.print(F("), ")); Serial.print(png->getBpp()); Serial.print(F(" bpp, pixel type: ")); Serial.println(png->getPixelType());
-    tft.startWrite();
-    uint32_t dt = millis();
-    rc = png->decode(NULL, 0);
-    Serial.print(millis() - dt);
-    Serial.print(F("ms"));
-    tft.endWrite();
-    png->close();
+    // MASTERED! Celebration mode
+    Serial.println(F("GAME MASTERED! Playing victory fanfare"));
+    
+    // Show MASTERED text in larger font over the footer area
+    tft.setTextColor(TFT_BLACK, TFT_YELLOW);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString("** MASTERED! **", 120, 225, 4);  // Larger font (4), above footer
+    tft.setTextDatum(TL_DATUM);  // Reset datum
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+            
+    uint16_t colorBlack = TFT_BLACK;
+    uint16_t colorGreen = tft.color565(0, 100, 0);  
+    uint16_t colors[] = { colorGreen, colorBlack };
+    int colorIndex = 0;
+    
+    // Flash background a few times before music
+    for (int i = 0; i < 6; i++)
+    {
+      redrawAchievementScreen(colors[colorIndex]);
+      colorIndex = (colorIndex + 1) % 2;
+      delay(150);
+    }
+    
+    // Play victory fanfare
+    play_victory_sound();
+    
+    // Flash more after music
+    for (int i = 0; i < 6; i++)
+    {
+      redrawAchievementScreen(colors[colorIndex]);
+      colorIndex = (colorIndex + 1) % 2;
+      delay(150);
+    }
+    
+    // Restore black background
+    redrawAchievementScreen(TFT_BLACK);
+    
   }
-  play_sound_achievement_unlocked();
+  else
+  {
+    // Normal achievement sound
+    play_sound_achievement_unlocked();
+  }
+  
   go_back_to_title_screen = true;
   go_back_to_title_screen_timestamp = millis();
   showAchievementCounter();
@@ -2774,9 +2910,13 @@ void setup()
   // Sync with Pico - ensures both devices are in sync after ESP32 reset
   if (!syncWithPico()) {
     print_line("Pico sync failed!", 0, 0);
-    print_line("Please power cycle", 1, 0);
+    print_line("Check connection", 1, 0);
+    print_line("Power cycle needed", 2, 0);
     setSemaphore(LED_BLINK_FAST, LED_RED);
-    // Continue anyway, user might need to power cycle
+    // Halt execution - user must power cycle
+    while (true) {
+      delay(1000);
+    }
   }
 
   // check if the reset button is pressed and handle the reset routine
