@@ -62,28 +62,28 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 
 ### Acquire the Parts
 
-| Part Name                                                 | Quantity   | Total Cost (USD)*    |
-|-----------------------------------------------------------|------------|----------------------|
-| 72-pin slot                                               | 1x         | ~ $1.25              |
-| SN74LVC1G3157DBVR                                         | 26x        | ~ $3.25              |
-| Raspberry Pi Pico (purple board)                          | 1x         | ~ $3.00              |
-| ESP32 C3 Supermini                                        | 1x         | ~ $2.50              |
-| 1.3 inch LCD 240x240 ST7789 with 7 pins                   | 1x         | ~ $2.75              |
-| Active Buzzer 3V + Transistor BC548                       | 1x         | ~ $1.25              |
-| Flat cable 20cm 1mm reverse 5pin                          | 1x         | ~ $0.20              |
-| M2 screw 6mm flat head with nut                           | 10x        | ~ $0.30              |
-| M2 screw 10mm                                             | 4x         | ~ $0.15              |
-| FPC FFC SMT SMD Flat Cable Connector 1mm Pitch 5 pins     | 2x         | ~ $0.30              |
-| PCB set                                                   | 1x         | ~ $2.00              |
-| 3d print parts set (case) - etsy                          | 1x         | ~ $15.00             |
-| Electrolytic capacitor 10µF 16V                           | 4x         |                      |
-| 1k ohm resistor (R1)                                      | 1x         |                      |
-| 10k ohm resistor (R2)                                     | 1x         |                      |
-| Push Button Switch 6x6x6                                  | 1x         |                      |
-| 90º degree female header pins (to connect the LCD 7 pins) | 1x         |                      |
-| 100 ohm resistor (R3 and R4) - optional                   | 2x         |                      |
-| Bi-color LED (Green / Red, Common Cathode) - optional     | 1x         |                      |
-| **Total** (without shipping fee and import taxes)         |            | ~ **$32.00**         |
+| Part Name                                                         | Quantity   | Total Cost (USD)*    |
+|-------------------------------------------------------------------|------------|----------------------|
+| NES 72-pin slot                                                   | 1x         | ~ $1.25              |
+| SN74LVC1G3157DBVR                                                 | 26x        | ~ $3.25              |
+| Raspberry Pi Pico (purple board)                                  | 1x         | ~ $3.00              |
+| ESP32 C3 Supermini PLUS (with external antenna)                   | 1x         | ~ $2.50              |
+| 1.3 inch LCD 240x240 ST7789 with 7 pins                           | 1x         | ~ $2.75              |
+| Active Buzzer 3V + Transistor BC548                               | 1x         | ~ $1.25              |
+| Flat cable 20cm 1mm reverse 5pin                                  | 1x         | ~ $0.20              |
+| M2 screw 6mm flat head with nut                                   | 10x        | ~ $0.30              |
+| M2 screw 10mm                                                     | 4x         | ~ $0.15              |
+| FFC & FPC Connectors 1.0 FFC Non ZIF SMT 5 pin - MOLEX 52808-0570 | 2x         | ~ $0.30              |
+| PCB set                                                           | 1x         | ~ $2.00              |
+| 3d print parts set (case) - etsy                                  | 1x         | ~ $15.00             |
+| Electrolytic capacitor 10µF 16V                                   | 4x         |                      |
+| 1k ohm resistor (R1)                                              | 1x         |                      |
+| 10k ohm resistor (R2)                                             | 1x         |                      |
+| Push Button Switch 6x6x6                                          | 1x         |                      |
+| 90º degree female header pins (to connect the LCD 7 pins)         | 1x         |                      |
+| 100 ohm resistor (R3 and R4) - optional                           | 2x         |                      |
+| Bi-color LED (Green / Red, Common Cathode) - optional             | 1x         |                      |
+| **Total** (without shipping fee and import taxes)                 |            | ~ **$32.00**         |
 
 \* Source: Aliexpress - 2025-03-29 <br/>
 
