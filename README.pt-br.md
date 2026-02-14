@@ -92,6 +92,8 @@ O **NES RA Adapter** transforma seu console NES original em uma máquina interat
 A partir da versão 1.0, graças às placas personalizadas do GH, você não precisa mais abrir o console para usar o adaptador. Com o case 3D que eu projetei, o adaptador funciona como um GameGenie — é só encaixar na gaveta de cartuchos e pronto. Também está disponível um case específico para o modelo top-loader.
 
 ** Video Guia de Montagem - (com timecode) ** - [https://www.youtube.com/watch?v=4uHbj2ckqv0](https://www.youtube.com/watch?v=4uHbj2ckqv0)
+<br/>&nbsp;&nbsp;&nbsp;&nbsp; **\\-** Assista como o Pico precisa ser soldado para evitar problemas com o case impresso em 3D (altura do pico pode impactar a centralização da placa).
+<br/>&nbsp;&nbsp;&nbsp;&nbsp; **\\-** Eu imprimi meu case usando PLA, com três paredes e preenchimento variando de 30% a 100%. Use suportes para o case da Placa 2.
 
 O adaptador é composto por duas PCBs conectadas por um cabo flat:
   - **Placa principal**: possui 26 chaves analógicas SMD (a parte mais desafiadora da solda), um Raspberry Pi Pico RP2040 roxo, o slot de cartucho, conector do cabo flat e alguns capacitores de acoplamento.
