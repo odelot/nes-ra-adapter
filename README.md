@@ -92,6 +92,8 @@ The **NES RA Adapter** transforms your original NES console into an interactive,
 Starting from version 1.0, thanks to GH’s custom boards, you no longer need to open your console to use the adapter. Combined with the 3D-printed case I designed, the adapter works just like a GameGenie — simply plug it into the cartridge slot and you’re ready to go. A dedicated case for the top-loader model is also available.
 
 **Assembly Video Guide (with timecode)** - [https://www.youtube.com/watch?v=4uHbj2ckqv0](https://www.youtube.com/watch?v=4uHbj2ckqv0)
+<br/>&nbsp;&nbsp;&nbsp;&nbsp; **\\-** Be sure to watch how the Pico needs to be soldered to avoid issues with the 3D-printed case.
+<br/>&nbsp;&nbsp;&nbsp;&nbsp; **\\-** I printed my case using PLA, with three walls and infill ranging from 30% to 100%. You’ll need to use supports for the Board 2 case.
 
 The adapter is built from two PCBs connected by a flat cable:
 
