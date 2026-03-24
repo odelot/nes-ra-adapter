@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2026-02-01
-   Version:          1.1
+   Date:             2026-03-14
+   Version:          1.2
    By odelot
 
    Libs used:
@@ -578,6 +578,43 @@ memory_unit read_from_memory_buffer()
     memory_unit data = memory_buffer[memory_tail];
     memory_tail = (memory_tail + 1) % MEMORY_BUFFER_SIZE;
     return data;
+}
+
+// search the entire memory_buffer backwards for a specific address
+// returns the memory_unit if found, or an empty one (address=0, data=0) if not found
+memory_unit find_in_memory_buffer(uint16_t address)
+{
+    if (memory_head == memory_tail)
+    {
+        // empty buffer
+        memory_unit empty;
+        empty.address = 0;
+        empty.data = 0;
+        return empty;
+    }
+    
+    // search backwards from the most recent entry (head - 1) to the oldest (tail)
+    int current = (memory_head - 1 + MEMORY_BUFFER_SIZE) % MEMORY_BUFFER_SIZE;
+    while (1)
+    {
+        if (memory_buffer[current].address == address)
+        {
+            return memory_buffer[current];
+        }
+        
+        if (current == memory_tail)
+        {
+            break; // reached the oldest entry, not found
+        }
+        
+        current = (current - 1 + MEMORY_BUFFER_SIZE) % MEMORY_BUFFER_SIZE;
+    }
+    
+    // not found
+    memory_unit empty;
+    empty.address = 0;
+    empty.data = 0;
+    return empty;
 }
 
 // print DMA buffer for debug (index and neighbors)
@@ -1223,6 +1260,7 @@ int main()
 
     // debug info
     unsigned int frame_counter = 0;
+    uint8_t last_frame_detection_strategy = 0; // 0 for oamdma, 1 for timed based
 
     // main loop for core 0 - handle UART communication and rcheevos processing
     while (true)
@@ -1334,25 +1372,33 @@ int main()
                 if (memory.address == 0x4014)
                 {
                     // best place to detect a frame so far                    
+                    
                     // printf("F: %d, diff: %llu us\n", frame_counter, diff); // debug
-                    if (diff > (FRAME_TIME_US - 667))
-                    { // inside a frame window, so process the frame
-                        last_frame_processed = now;
-                        diff = 0; 
+                    
+                    u_int64_t delta = 8000; // ~ half of the frame time in microseconds for 60hz 
+                    if (last_frame_detection_strategy == 0) {
+                        delta = 2500; // ~ 15% of the frame time in microseconds for 60hz - we want to be more strict when we detect frames using the OAM DMA address monitoring, to avoid false positives
+                    }
+                    if (diff > (FRAME_TIME_US - delta))  
+                    { // inside a frame window, so process the frame                        
+                        now = time_us_64();
+                        last_frame_processed = now;                        
                         rc_client_do_frame(g_client);
+                        //printf("DF0=%llu, ", diff);
+                        diff = 0;
+                        last_frame_detection_strategy = 0; 
                     }
                     // else {
-                    //     //printf("s"); // debug - updated oam register too early - skip frame
+                    //     printf("df0-skip=%llu, ", diff);
                     // }
 
-                    // memory dump during a frame for DEBUG
-                    // printf("_F");
+
+                    //memory dump during a frame for DEBUG
                     // for (int i = 0; i < unique_memory_addresses_count; i += 1)
                     // {
-                    //     //  "0xH006c=0_0xH0029=33_0xP0101>d0xP0101", // mega man 5
-                    //     if (unique_memory_addresses[i] == 0x006C || unique_memory_addresses[i] == 0x0029 || unique_memory_addresses[i] == 0x0101)
+                    //     if (unique_memory_addresses[i] == 0x0017)
                     //     {
-                    //         printf("%03X ", memory_data[i]);
+                    //         printf("DF0=%03X ", memory_data[i]); //detect frame heuristic number 1 - OAM DMA based
                     //     }
                     // }
                     // printf ("\n");
@@ -1375,33 +1421,65 @@ int main()
                     {
                         memory.address = memory.address & 0x07FF; // handle ram mirror
                     }
+                    
 
-                    // TODO: use binary search to find the index of the memory address
-                    for (int i = 0; i < unique_memory_addresses_count; i += 1)
+                    // if (memory.address == 0x0017)
+                    // {
+                    //     printf("W: %03X ", memory.data); // debug - print writes on the OAM DMA register
+                    // }
+                    
+                    // binary search to find the index of the memory address
+                    int bot = 0;
+                    int top = unique_memory_addresses_count - 1;
+                    while (bot < top)
                     {
-                        if (memory.address == unique_memory_addresses[i])
+                        int mid = top - (top - bot) / 2;
+                        if (memory.address < unique_memory_addresses[mid])
                         {
-                            memory_data[i] = memory.data;
-                            break;
+                            top = mid - 1;
+                        }
+                        else
+                        {
+                            bot = mid;
                         }
                     }
+                    if (unique_memory_addresses[top] == memory.address)
+                    {
+                        memory_data[top] = memory.data;
+                    }
+
+                    // linear search
+                    // for (int i = 0; i < unique_memory_addresses_count; i += 1)
+                    // {
+                    //     if (memory.address == unique_memory_addresses[i])
+                    //     {
+                    //         memory_data[i] = memory.data;
+                    //         break;
+                    //     }
+                    // }
                 }
             }
             // simulate a frame every 16750ms (for 60hz) if we cannot detect any frame using the OAMDMA address monitoring
             // example of need: punchout / chip n dale rescue rangers
-            if (diff > (FRAME_TIME_US + 85)) // a frame takes 16666 microsecond in 60hz and 20000 microseconds in 50hz
+            u_int64_t window = FRAME_TIME_US << 1; // two frames time window when coming from OAM DMA strategy
+            if (last_frame_detection_strategy == 1) {
+                window = FRAME_TIME_US; 
+            }
+            if (diff > window) // a frame takes 16666 microsecond in 60hz and 20000 microseconds in 50hz
             {
+                
+                now = time_us_64();                    
                 last_frame_processed = now;
                 rc_client_do_frame(g_client);
-
-                // memory dump during a frame for DEBUG
+                // printf("DF1=%llu, ", diff);
+                last_frame_detection_strategy = 1;
+                diff = 0;
+                //memory dump during a frame for DEBUG 
                 // for (int i = 0; i < unique_memory_addresses_count; i += 1)
                 // {
-                //     //  "0xH006c=0_0xH0029=33_0xP0101>d0xP0101", // mega man 5
-                //     if (unique_memory_addresses[i] == 0x006C || unique_memory_addresses[i] == 0x0029 || unique_memory_addresses[i] == 0x0101)
+                //     if (unique_memory_addresses[i] == 0x0017)
                 //     {
-                //         printf("%03X ", memory_data[i]);
-                //     }
+                //         printf("DF1=%03X ", memory_data[i]); //detect frame heuristic number 2 - time based 
                 // }
                 // printf ("\n");
             }
