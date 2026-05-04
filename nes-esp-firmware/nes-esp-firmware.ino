@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2026-02-01
-   Version:          1.1
+   Date:             2026-03-14
+   Version:          1.2
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -234,7 +234,7 @@ const char* getStateErrorMessage(DeviceState s) {
     case STATE_ERROR_RESPONSE_TOO_BIG:
       return "RA response is too big";
     case STATE_ERROR_LOGIN_FAILED:
-      return "Login failed";
+      return "Could not log in RA!";
     case STATE_ERROR_CARTRIDGE_NOT_FOUND:
       return "Cartridge not identified";
     default:
@@ -446,6 +446,7 @@ void setSemaphore (LedMode mode, LedColor color) {
 // Returns true if found, false otherwise. Result stored in md5_out buffer.
 bool get_MD5(const char* crc, bool first_bank, char* md5_out, size_t md5_out_size)
 {
+  
   md5_out[0] = '\0'; // Initialize empty
   
   if (strcmp(crc, "BD7BC39F") == 0)
@@ -582,7 +583,7 @@ void remove_json_field_buffer(CharBufferStream &buf, const char* field_to_remove
   {
     char c = data[read_idx];
 
-    if (c == '"') {
+    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
       inside_quotes = !inside_quotes;
     }
 
@@ -679,29 +680,41 @@ void clean_json_field_array_value_buffer(CharBufferStream &buf, const char* fiel
   bool inside_quotes = false;
   bool skip_field = false;
   bool remove_next_array = false;
+  int array_depth = 0;
   size_t read_idx = 0, write_idx = 0;
 
   while (read_idx < len)
   {
     char c = data[read_idx];
-    
-    if (c == '[') {
-      if (remove_next_array) {
-        skip_field = true;
-        data[write_idx++] = '[';
-      }
-    }
-    if (c == ']') {
-      if (remove_next_array) {
-        remove_next_array = false;
-        skip_field = false;
-      }
-    }
 
+    // Update quote state first (handling escaped quotes)
     if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
       inside_quotes = !inside_quotes;
     }
 
+    // Only process [ and ] when NOT inside quotes
+    if (!inside_quotes) {
+      if (c == '[') {
+        if (remove_next_array) {
+          if (array_depth == 0) {
+            skip_field = true;
+            data[write_idx++] = '[';
+          }
+          array_depth++;
+        }
+      }
+      if (c == ']') {
+        if (remove_next_array) {
+          array_depth--;
+          if (array_depth == 0) {
+            remove_next_array = false;
+            skip_field = false;
+          }
+        }
+      }
+    }
+
+    // Detect the field name to remove
     if (inside_quotes &&
         read_idx + 1 + field_len + 1 < len &&
         strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
@@ -741,10 +754,17 @@ void remove_achievements_with_flags_5_buffer(CharBufferStream &buf)
 
     int objEnd = objStart;
     int braces = 1;
+    bool inString = false;
     while (braces > 0 && objEnd < arrayEnd) {
       objEnd++;
-      if (data[objEnd] == '{') braces++;
-      else if (data[objEnd] == '}') braces--;
+      char ch = data[objEnd];
+      if (ch == '"' && (objEnd == 0 || data[objEnd - 1] != '\\')) {
+        inString = !inString;
+      }
+      if (!inString) {
+        if (ch == '{') braces++;
+        else if (ch == '}') braces--;
+      }
     }
 
     if (objEnd >= arrayEnd) break;
@@ -780,6 +800,16 @@ void remove_achievements_with_flags_5_buffer(CharBufferStream &buf)
   }
 }
 
+// Helper: find closing quote handling escaped quotes
+int findClosingQuote(char* data, int start, int limit) {
+  for (int i = start; i < limit; i++) {
+    if (data[i] == '"' && (i == 0 || data[i - 1] != '\\')) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 // Remove achievements with very large MemAddr - in-place on CharBufferStream
 void remove_achievements_with_long_MemAddr_buffer(CharBufferStream &buf, uint32_t maxSize)
 {
@@ -800,10 +830,17 @@ void remove_achievements_with_long_MemAddr_buffer(CharBufferStream &buf, uint32_
 
     int objEnd = objStart;
     int braceCount = 1;
+    bool inString = false;
     while (braceCount > 0 && objEnd + 1 < (int)buf.length()) {
       objEnd++;
-      if (data[objEnd] == '{') braceCount++;
-      else if (data[objEnd] == '}') braceCount--;
+      char ch = data[objEnd];
+      if (ch == '"' && (objEnd == 0 || data[objEnd - 1] != '\\')) {
+        inString = !inString;
+      }
+      if (!inString) {
+        if (ch == '{') braceCount++;
+        else if (ch == '}') braceCount--;
+      }
     }
 
     if (objEnd >= arrayEnd) break;
@@ -828,7 +865,7 @@ void remove_achievements_with_long_MemAddr_buffer(CharBufferStream &buf, uint32_
       continue;
     }
 
-    int valueEnd = buf.indexOf("\"", valueStart + 1);
+    int valueEnd = findClosingQuote(data, valueStart + 1, objEnd);
     if (valueEnd == -1 || valueEnd > objEnd) {
       pos = objEnd + 1;
       continue;
@@ -1528,6 +1565,9 @@ String try_login_RA(String ra_user, String ra_pass)
 
  
   String ra_token = extractTokenFromBuffer(response);
+  ra_token.trim();
+  
+  Serial.print(F("RA Token: ")); Serial.println(ra_token);
   
   // print_memory_stats("AFTER TOKEN EXTRACT");
   
@@ -2010,7 +2050,7 @@ int perform_http_request_buffer(
       continue;
     }
     
-    const char user_agent[] = "NES_RA_ADAPTER/1.1 rcheevos/11.6";
+    const char user_agent[] = "NES_RA_ADAPTER/1.2 rcheevos/11.6";
     globalHttpClient.setUserAgent(user_agent);
 
     Serial.println(F("Sending request..."));
@@ -2508,7 +2548,11 @@ void handle_read_crc_command(const char* cmd, size_t cmd_len) {
   if (end_len > 8) end_len = 8;
   memcpy(end_CRC, end_ptr, end_len);
   end_CRC[end_len] = '\0';
-  
+
+  // debug: force a game to test - used to fix ninja gaiden  
+  // memcpy(end_CRC, "44B6DB79", 8);
+  // memcpy(begin_CRC, "F5E0E7DC", 8);
+
   Serial.print(F("READ_CRC="));
   Serial.write(cmd, cmd_len);
   Serial.println();
@@ -2909,9 +2953,10 @@ void setup()
 
   // Sync with Pico - ensures both devices are in sync after ESP32 reset
   if (!syncWithPico()) {
-    print_line("Pico sync failed!", 0, 0);
-    print_line("Check connection", 1, 0);
-    print_line("Power cycle needed", 2, 0);
+    print_line("Pico sync failed!", 0, 2);
+    print_line("Check connection", 1, 2);
+    print_line("Power cycle needed", 2, 2);
+    play_error_sound();
     setSemaphore(LED_BLINK_FAST, LED_RED);
     // Halt execution - user must power cycle
     while (true) {
@@ -2992,7 +3037,7 @@ void setup()
         String temp_ra_pass = custom_param_2.getValue();
         ra_user_token = try_login_RA(temp_ra_user, temp_ra_pass);
         Serial.print(ra_user_token);
-        if (ra_user_token.compareTo("null") != 0)
+        if (ra_user_token.compareTo("") != 0)
         {
           setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
           print_line("Logged in RA!", 1, 0);
@@ -3044,7 +3089,7 @@ void setup()
     
     print_line("Logging in RA...", 1, 1);
     ra_user_token = try_login_RA(String(ra_user), String(ra_pass));
-    if (ra_user_token.compareTo("null") != 0)
+    if (ra_user_token.compareTo("") != 0)
     {
       setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
       print_line("Logged in RA!", 1, 0);
@@ -3054,9 +3099,10 @@ void setup()
     else
     {
       setSemaphore(LED_BLINK_FAST, LED_RED);
-      print_line("Could not log in RA!", 1, 2);
-      print_line("Consider reset the adapter", 3, -1, 16);
-      play_error_sound();
+      print_line("Wrong credential or RA offline", 2, -1, -22);
+      print_line("Consider reset the adapter", 3, -1, -22 );
+      state = STATE_ERROR_LOGIN_FAILED;      
+      return;
     }
   }
 
