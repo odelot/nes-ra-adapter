@@ -426,6 +426,37 @@ void end_GPIO_for_CRC32()
     }
 }
 
+// configure pull-ups to dominate the bus and prevent console from interacting
+// with the cartridge while the analog switch is off. RW pulled high prevents
+// writes to cartridge RAM, ROMSEL pulled high keeps ROM/RAM deselected,
+// M2 pulled low keeps bus cycle inactive.
+void set_GPIO_dominate_bus()
+{
+    for (int i = 0; i < 8; i += 1)
+    {
+        gpio_init(NES_D[i]);
+        gpio_set_dir(NES_D[i], GPIO_IN);
+        gpio_pull_up(NES_D[i]);
+    }
+    for (int i = 0; i < 15; i += 1)
+    {
+        gpio_init(NES_A[i]);
+        gpio_set_dir(NES_A[i], GPIO_IN);
+        gpio_pull_up(NES_A[i]);
+    }
+    gpio_init(NES_RW);
+    gpio_set_dir(NES_RW, GPIO_IN);
+    gpio_pull_up(NES_RW);
+
+    gpio_init(NES_ROMSEL);
+    gpio_set_dir(NES_ROMSEL, GPIO_IN);
+    gpio_pull_up(NES_ROMSEL);
+
+    gpio_init(NES_M2);
+    gpio_set_dir(NES_M2, GPIO_IN);
+    gpio_pull_down(NES_M2);
+}
+
 /**
  * DMA functions
  */
@@ -682,6 +713,11 @@ void handle_bus_to_detect_memory_writes()
     mutex_init(&cpu_bus_mutex);
     mutex_enter_blocking(&cpu_bus_mutex); // make sure core 1 is fully dedicated to handle the BUS
 
+    // restore GPIOs to functional state (no pulls) before configuring PIO
+    // this releases the bus domination pull-ups so the console can communicate with the cartridge
+    reset_GPIO();
+    sleep_ms(10);
+
     setup_PIO();
     setup_dma();
 
@@ -818,11 +854,17 @@ void calculate_CRC32_to_idenfity_cartridge()
         gpio_put(NES_M2, 0);
         gpio_put(NES_ROMSEL, 1);
 
+        // read first bank sequentially (512 bytes)
         for (int c = 0; c < 512; c++)
         {
             uint32_t byte_from_first_bank = read_NES_PRG_ROM_Address(0x8000 + c);
-            uint32_t byte_from_last_bank = read_NES_PRG_ROM_Address(0xE000 + c);
             crc_begin = update_crc32(byte_from_first_bank, crc_begin);
+        }
+
+        // read last bank sequentially (512 bytes)
+        for (int c = 0; c < 512; c++)
+        {
+            uint32_t byte_from_last_bank = read_NES_PRG_ROM_Address(0xE000 + c);
             crc_end = update_crc32(byte_from_last_bank, crc_end);
         }
 
@@ -837,6 +879,10 @@ void calculate_CRC32_to_idenfity_cartridge()
     }
     uart_puts(UART_ID, command);
     end_GPIO_for_CRC32();
+
+    // after reading, dominate the bus with pull-ups to prevent the console
+    // from interacting with the cartridge when the analog switch is turned on
+    set_GPIO_dominate_bus();
 }
 
 // aux function - startWith string test
