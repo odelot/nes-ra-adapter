@@ -226,32 +226,23 @@ mutex_t cpu_bus_mutex;
  * Serial buffer to handle commands from the ESP32
  */
 
-#define SERIAL_BUFFER_SIZE 32768 // maybe we can increase this more 8kb
+#define SERIAL_BUFFER_SIZE 65536
 u_char serial_buffer[SERIAL_BUFFER_SIZE];
 u_char *serial_buffer_head = serial_buffer;
 
 /*
- * Circular Buffer for memory writes detected on the BUS
- * Used to send data from Core 1 to Core 0
+ * Static Arrays for NES RAM and PRG-RAM/SRAM
  */
+volatile uint8_t nes_ram[2048];
+volatile uint8_t nes_sram[8192];
 
-#define MEMORY_BUFFER_SIZE 4096 // maybe we can decrease it to 2048 - games like FF that uses a lot of addresses reached ~500
-volatile int memory_head = 0;
-volatile int memory_tail = 0;
-volatile int memory_max = 0;
+// Snapshot arrays to capture atomic state during OAMDMA (VBLANK)
+uint8_t nes_ram_snapshot[2048];
+uint8_t nes_sram_snapshot[8192];
 
-struct _memory_unit
-{
-    uint16_t address;
-    uint8_t data;
-};
-
-typedef struct _memory_unit memory_unit;
-memory_unit memory_buffer[MEMORY_BUFFER_SIZE];
-
-uint16_t unique_memory_addresses_count = 0;
-uint16_t *unique_memory_addresses = NULL;
-uint8_t *memory_data = NULL;
+// flags for synchronization between cores
+volatile bool flag_internal_ram_written = false;
+volatile bool flag_oamdma_written = false;
 
 /*
  * global variables for using DMA to read the BUS
@@ -259,7 +250,7 @@ uint8_t *memory_data = NULL;
  * when one is being feed, the other is being read
  */
 
-#define BUFFER_SIZE 4096 // Tamanho de cada buffer
+#define BUFFER_SIZE 2048 // Tamanho de cada buffer
 
 volatile uint32_t buffer_a[BUFFER_SIZE];
 volatile uint32_t buffer_b[BUFFER_SIZE];
@@ -571,141 +562,7 @@ void stop_PIO()
     pio_remove_program(BUS_PIO, &memoryBus_program, PIO_offset); // remove program from PIO
 }
 
-// returns the number of elements in the circular buffer
-unsigned int memory_buffer_size()
-{
-    return (memory_head - memory_tail + MEMORY_BUFFER_SIZE) % MEMORY_BUFFER_SIZE;
-}
-
-// add a memory write to the circular buffer
-void add_to_memory_buffer(uint32_t address, uint8_t data)
-{
-    memory_buffer[memory_head].address = address;
-    memory_buffer[memory_head].data = data;
-    memory_head = (memory_head + 1) % MEMORY_BUFFER_SIZE;
-    if (memory_head == memory_tail)
-    {
-        printf("Buffer full\n"); // this also should not happen
-        // Buffer is full, discard or replace oldest data
-        memory_tail = (memory_tail + 1) % MEMORY_BUFFER_SIZE;
-    }
-    if (memory_buffer_size() > memory_max) // for debug purposes
-    {
-        memory_max = memory_buffer_size();
-    }
-}
-
-// read a captured memory write from the circular buffer
-memory_unit read_from_memory_buffer()
-{
-    if (memory_head == memory_tail)
-    {
-        // empty buffer
-        memory_unit empty;
-        empty.address = 0;
-        empty.data = 0;
-        return empty;
-    }
-    memory_unit data = memory_buffer[memory_tail];
-    memory_tail = (memory_tail + 1) % MEMORY_BUFFER_SIZE;
-    return data;
-}
-
-// search the entire memory_buffer backwards for a specific address
-// returns the memory_unit if found, or an empty one (address=0, data=0) if not found
-memory_unit find_in_memory_buffer(uint16_t address)
-{
-    if (memory_head == memory_tail)
-    {
-        // empty buffer
-        memory_unit empty;
-        empty.address = 0;
-        empty.data = 0;
-        return empty;
-    }
-    
-    // search backwards from the most recent entry (head - 1) to the oldest (tail)
-    int current = (memory_head - 1 + MEMORY_BUFFER_SIZE) % MEMORY_BUFFER_SIZE;
-    while (1)
-    {
-        if (memory_buffer[current].address == address)
-        {
-            return memory_buffer[current];
-        }
-        
-        if (current == memory_tail)
-        {
-            break; // reached the oldest entry, not found
-        }
-        
-        current = (current - 1 + MEMORY_BUFFER_SIZE) % MEMORY_BUFFER_SIZE;
-    }
-    
-    // not found
-    memory_unit empty;
-    empty.address = 0;
-    empty.data = 0;
-    return empty;
-}
-
-// print DMA buffer for debug (index and neighbors)
-void print_buffer(uint32_t *buffer, int index)
-{
-    int min = index - 7;
-    int max = index + 1;
-    if (min < 0)
-    {
-        min = 0;
-    }
-    if (max >= BUFFER_SIZE)
-    {
-        max = BUFFER_SIZE - 1;
-    }
-    for (int i = min; i <= max; i += 1)
-    {
-        printf("%p\n", buffer[i]);
-    }
-    printf("\n");
-}
-
-// check if the address is in the list of unique addresses and if affirmative,
-// add to the circular buffer
-inline void try_add_to_circular_buffer(uint16_t address, uint8_t data)
-{
-    // sequencial search
-    // for (int j = 0; j < unique_memory_addresses_count; j += 1)
-    // {
-    //     if (unique_memory_addresses[j] == address)
-    //     {
-    //         add_to_memory_buffer(address, data);
-    //         return;
-    //     }
-    // }
-
-    // tests on the raspberry pico showed binary search to be faster than sequential search when
-    // the vector is larger than about 7 elements - we typically monitor more than 7 memory addresses per game
-
-    // binary search
-    int bot = 0;
-    int top = unique_memory_addresses_count - 1;
-    while (bot < top)
-    {
-        int mid = top - (top - bot) / 2;
-
-        if (address < unique_memory_addresses[mid])
-        {
-            top = mid - 1;
-        }
-        else
-        {
-            bot = mid;
-        }
-    }
-    if (unique_memory_addresses[top] == address)
-    {
-        add_to_memory_buffer(address, data);
-    }
-}
+// Memory buffer functions removed in favor of static RAM mirror
 
 // handle detection of memory writes in the NES BUS, using DMA and PIO
 void handle_bus_to_detect_memory_writes()
@@ -753,10 +610,23 @@ void handle_bus_to_detect_memory_writes()
                 data_value = raw_bus_data;
                 rw = (raw_bus_data >> 25) & 0x1;
 
-                // detect a stable value that was being written and try to add to the circular buffer
+                // detect a stable value that was being written and update the RAM mirror
                 if (address_value != last_address_value && last_rw == 0)
                 {
-                    try_add_to_circular_buffer(last_address_value, last_data_value);
+                    if (last_address_value < 0x2000) {
+                        nes_ram[last_address_value & 0x07FF] = last_data_value;
+                        if (!flag_internal_ram_written) {
+                            flag_internal_ram_written = true;
+                        }
+                    } else if (last_address_value >= 0x6000 && last_address_value < 0x8000) {
+                        nes_sram[last_address_value - 0x6000] = last_data_value;
+                    } else if (last_address_value == 0x4014) {
+                        if (!flag_oamdma_written) {
+                            memcpy(nes_ram_snapshot, (void*)nes_ram, 2048);
+                            memcpy(nes_sram_snapshot, (void*)nes_sram, 8192);
+                            flag_oamdma_written = true;
+                        }
+                    }
                 }
                 last_address_value = address_value;
                 last_data_value = data_value;
@@ -781,10 +651,23 @@ void handle_bus_to_detect_memory_writes()
                 address_value = (raw_bus_data >> 8) & 0x7FFF;
                 data_value = raw_bus_data;
                 rw = (raw_bus_data >> 25) & 0x1;
-                // detect a stable value that was being written and try to add to the circular buffer
+                // detect a stable value that was being written and update the RAM mirror
                 if (address_value != last_address_value && last_rw == 0)
                 {
-                    try_add_to_circular_buffer(last_address_value, last_data_value);
+                    if (last_address_value < 0x2000) {
+                        nes_ram[last_address_value & 0x07FF] = last_data_value;
+                        if (!flag_internal_ram_written) {
+                            flag_internal_ram_written = true;
+                        }
+                    } else if (last_address_value >= 0x6000 && last_address_value < 0x8000) {
+                        nes_sram[last_address_value - 0x6000] = last_data_value;
+                    } else if (last_address_value == 0x4014) {
+                        if (!flag_oamdma_written) {
+                            memcpy(nes_ram_snapshot, (void*)nes_ram, 2048);
+                            memcpy(nes_sram_snapshot, (void*)nes_sram, 8192);
+                            flag_oamdma_written = true;
+                        }
+                    }
                 }
                 last_address_value = address_value;
                 last_data_value = data_value;
@@ -941,88 +824,18 @@ bool fifo_dequeue(FIFO_t *fifo, achievement_t *value)
  * RetroAchievements (rcheevos) related functions
  */
 
-// not all address are validated, so it is better not use it
-static uint32_t read_memory_do_nothing(uint32_t address, uint8_t *buffer, uint32_t num_bytes, rc_client_t *client)
-{
-    return num_bytes;
-}
-
-// add the OAMDMA address to the list of monitored addresses
-static void add_oamdma_address()
-{
-    uint8_t found = 0;
-    uint16_t address = 0x4014;
-    for (int i = 0; i < unique_memory_addresses_count; i += 1)
-    {
-        if (address == unique_memory_addresses[i])
-        {
-            found = 1;
-            break;
-        }
-    }
-    if (found == 0)
-    {
-        printf("add oamdma address %p\n", address);
-        unique_memory_addresses_count += 1;
-        unique_memory_addresses = (uint16_t *)realloc(unique_memory_addresses, unique_memory_addresses_count * sizeof(uint16_t));
-        unique_memory_addresses[unique_memory_addresses_count - 1] = address;
-    }
-}
-
-// capture the memory address of interest and add to the list of monitored addresses
-static uint32_t read_memory_init(uint32_t address, uint8_t *buffer, uint32_t num_bytes, rc_client_t *client)
-{
-    // handle address mirror
-    if (address <= 0x1FFF)
-    {
-        address &= 0x07FF;
-    }
-
-    for (int j = 0; j < num_bytes; j += 1)
-    {
-        uint16_t new_address = address + j;
-        uint8_t found = 0;
-        for (int i = 0; i < unique_memory_addresses_count; i += 1)
-        {
-            if (new_address == unique_memory_addresses[i])
-            {
-                found = 1;
-                break;
-            }
-        }
-        if (found == 0)
-        {
-            printf("init address %p, num_bytes: %d\n", new_address, num_bytes);
-            unique_memory_addresses_count += 1;
-            unique_memory_addresses = (uint16_t *)realloc(unique_memory_addresses, unique_memory_addresses_count * sizeof(uint16_t));
-            unique_memory_addresses[unique_memory_addresses_count - 1] = new_address;
-        }
-        else
-        {
-            printf("init address %p, num_bytes: %d (already monitored)\n", new_address, num_bytes);
-        }
-        buffer[j] = 0;
-    }
-    return num_bytes;
-}
-
 // read the memory address we keep track and return the data to rcheevos
 static uint32_t read_memory_ingame(uint32_t address, uint8_t *buffer, uint32_t num_bytes, rc_client_t *client)
 {
-    // handle address mirror
-    if (address <= 0x1FFF)
+    for (uint32_t i = 0; i < num_bytes; i += 1)
     {
-        address &= 0x07FF;
-    }
-    for (int i = 0; i < unique_memory_addresses_count; i += 1)
-    {
-        if (address == unique_memory_addresses[i])
-        {
-            for (int j = 0; j < num_bytes; j += 1)
-            {
-                buffer[j] = memory_data[i + j];
-            }
-            break;
+        uint32_t addr = address + i;
+        if (addr < 0x2000) {
+            buffer[i] = nes_ram_snapshot[addr & 0x07FF];
+        } else if (addr >= 0x6000 && addr < 0x8000) {
+            buffer[i] = nes_sram_snapshot[addr - 0x6000];
+        } else {
+            buffer[i] = 0; // Default for unmapped/unsupported regions
         }
     }
     return num_bytes;
@@ -1061,8 +874,9 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
             printf(aux);
             uart_puts(UART_ID, aux);
         }
-        rc_client_set_read_memory_function(g_client, read_memory_init);
-        rc_client_do_frame(g_client); // to trigger the read_memory_init and capture the memory address of interest
+        // Use the ingame memory reader directly since we have a full RAM mirror
+        rc_client_set_read_memory_function(g_client, read_memory_ingame);
+        rc_client_do_frame(g_client); // to trigger initial state evaluation
 
         // send achievement summary to ESP32 (after do_frame so unlocks are processed)
         if (rc_client_is_game_loaded(g_client))
@@ -1074,29 +888,6 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
             printf(aux);
             uart_puts(UART_ID, aux);
         }
-
-        // add OAM DMA address to the list of monitored addresses - useful to detect frames
-        add_oamdma_address();
-
-        // bubble sort unique_memory_addresses
-        for (int i = 0; i < unique_memory_addresses_count; i += 1)
-        {
-            for (int j = 0; j < unique_memory_addresses_count - i - 1; j += 1)
-            {
-                if (unique_memory_addresses[j] > unique_memory_addresses[j + 1])
-                {
-                    uint16_t temp = unique_memory_addresses[j];
-                    unique_memory_addresses[j] = unique_memory_addresses[j + 1];
-                    unique_memory_addresses[j + 1] = temp;
-                }
-            }
-        }
-
-        memory_data = (uint8_t *)malloc(unique_memory_addresses_count * sizeof(uint8_t));
-        memset(memory_data, 0, unique_memory_addresses_count * sizeof(uint8_t));
-
-        // change the read_memory function to the one that will return the data from the circular buffer
-        rc_client_set_read_memory_function(g_client, read_memory_ingame);
 
         // lunch the core 1 to handle the memory write detection on the BUS
         multicore_launch_core1(handle_bus_to_detect_memory_writes);
@@ -1395,116 +1186,38 @@ int main()
         {
             u_int64_t now = time_us_64();                // get current time in microseconds
             u_int64_t diff = now - last_frame_processed; 
-            // read from circular buffer detectd memory writes
-            if (memory_buffer_size() > 0)
+
+            // we started writing on memory ram - so we can assume user reseted the NES and the game is being played
+            if (nes_reseted == 0 && flag_internal_ram_written)
             {
-                memory_unit memory = read_from_memory_buffer();
+                nes_reseted = 1;
+                uart_puts(UART_ID, "NES_RESETED\r\n");
+            }
 
-                // we started writing on memory ram - so we can assume user reseted the NES and the game is being played
-                if (nes_reseted == 0 && memory.address < 0x07FF)
-                {
-                    nes_reseted = 1;
-                    uart_puts(UART_ID, "NES_RESETED\r\n");
-
-                    // for debug - print the memory addresses we are monitoring after the reset is detected
-                    for (int i = 0; i < unique_memory_addresses_count; i += 1)
-                    {
-                        printf("%03X ", unique_memory_addresses[i]);
-                    }
-                    printf("\n");
+            // if OAMDMA was written, we can assume a frame is being processed
+            if (flag_oamdma_written)
+            {
+                flag_oamdma_written = false;
+                // best place to detect a frame so far                    
+                u_int64_t delta = 8000; // ~ half of the frame time in microseconds for 60hz 
+                if (last_frame_detection_strategy == 0) {
+                    delta = 2500; // ~ 15% of the frame time in microseconds for 60hz - we want to be more strict when we detect frames using the OAM DMA address monitoring, to avoid false positives
                 }
-                
-                // if memory address is 0x4014, we can assume a frame is being processed
-                if (memory.address == 0x4014)
-                {
-                    // best place to detect a frame so far                    
-                    
-                    // printf("F: %d, diff: %llu us\n", frame_counter, diff); // debug
-                    
-                    u_int64_t delta = 8000; // ~ half of the frame time in microseconds for 60hz 
-                    if (last_frame_detection_strategy == 0) {
-                        delta = 2500; // ~ 15% of the frame time in microseconds for 60hz - we want to be more strict when we detect frames using the OAM DMA address monitoring, to avoid false positives
-                    }
-                    if (diff > (FRAME_TIME_US - delta))  
-                    { // inside a frame window, so process the frame                        
-                        now = time_us_64();
-                        last_frame_processed = now;                        
-                        rc_client_do_frame(g_client);
-                        //printf("DF0=%llu, ", diff);
-                        diff = 0;
-                        last_frame_detection_strategy = 0; 
-                    }
-                    // else {
-                    //     printf("df0-skip=%llu, ", diff);
-                    // }
-
-
-                    //memory dump during a frame for DEBUG
-                    // for (int i = 0; i < unique_memory_addresses_count; i += 1)
-                    // {
-                    //     if (unique_memory_addresses[i] == 0x0017)
-                    //     {
-                    //         printf("DF0=%03X ", memory_data[i]); //detect frame heuristic number 1 - OAM DMA based
-                    //     }
-                    // }
-                    // printf ("\n");
-
-                    // debug memory circular buffer size - prints every 30 seconds with the circular buffer between the cores
-                    // are not empty - helps us monitoring the size of the circular buffer
+                if (diff > (FRAME_TIME_US - delta))  
+                { // inside a frame window, so process the frame
+                    now = time_us_64();
+                    last_frame_processed = now;                    
+                    rc_client_do_frame(g_client);
+                    diff = 0;
+                    last_frame_detection_strategy = 0; 
                     frame_counter += 1;
                     if (frame_counter % 1800 == 0) //~ 30 seconds in 60hz
                     {
-                        if (memory_buffer_size() > 0)
-                        {
-                            printf("F: %d, BS: %d, MAX: %d\n", frame_counter, memory_buffer_size(), memory_max);
-                        }
+                        printf("F: %d\n", frame_counter);
                     }
-                }
-                // if not, it is a memory of interest to detect achievements
-                else
-                {
-                    if (memory.address <= 0x1FFF)
-                    {
-                        memory.address = memory.address & 0x07FF; // handle ram mirror
-                    }
-                    
-
-                    // if (memory.address == 0x0017)
-                    // {
-                    //     printf("W: %03X ", memory.data); // debug - print writes on the OAM DMA register
-                    // }
-                    
-                    // binary search to find the index of the memory address
-                    int bot = 0;
-                    int top = unique_memory_addresses_count - 1;
-                    while (bot < top)
-                    {
-                        int mid = top - (top - bot) / 2;
-                        if (memory.address < unique_memory_addresses[mid])
-                        {
-                            top = mid - 1;
-                        }
-                        else
-                        {
-                            bot = mid;
-                        }
-                    }
-                    if (unique_memory_addresses[top] == memory.address)
-                    {
-                        memory_data[top] = memory.data;
-                    }
-
-                    // linear search
-                    // for (int i = 0; i < unique_memory_addresses_count; i += 1)
-                    // {
-                    //     if (memory.address == unique_memory_addresses[i])
-                    //     {
-                    //         memory_data[i] = memory.data;
-                    //         break;
-                    //     }
-                    // }
                 }
             }
+
             // simulate a frame every 16750ms (for 60hz) if we cannot detect any frame using the OAMDMA address monitoring
             // example of need: punchout / chip n dale rescue rangers
             u_int64_t window = FRAME_TIME_US << 1; // two frames time window when coming from OAM DMA strategy
@@ -1516,6 +1229,8 @@ int main()
                 
                 now = time_us_64();                    
                 last_frame_processed = now;
+                memcpy(nes_ram_snapshot, (void*)nes_ram, 2048);
+                memcpy(nes_sram_snapshot, (void*)nes_sram, 8192);
                 rc_client_do_frame(g_client);
                 // printf("DF1=%llu, ", diff);
                 last_frame_detection_strategy = 1;
@@ -1662,7 +1377,7 @@ int main()
                     printf("L:START_WATCH\n");
 
                     // init rcheevos
-                    g_client = initialize_retroachievements_client(g_client, read_memory_do_nothing, server_call);
+                    g_client = initialize_retroachievements_client(g_client, read_memory_ingame, server_call);
                     rc_client_get_user_agent_clause(g_client, rcheevos_userdata, sizeof(rcheevos_userdata)); // TODO: send to esp32 before doing requests
                     printf("USER_AGENT=%s\r\n", rcheevos_userdata);
                     rc_client_set_event_handler(g_client, event_handler);
