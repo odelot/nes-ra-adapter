@@ -22,8 +22,8 @@
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2026-03-14
-   Version:          1.2
+   Date:             2026-05-15
+   Version:          1.3
    By odelot
 
    Libs used:
@@ -224,21 +224,33 @@ mutex_t cpu_bus_mutex;
 
 /*
  * Serial buffer to handle commands from the ESP32
+ *
+ * Allocated dynamically so we can hold the large achievement patch response
+ * (up to ~100KB from the ESP32) during load, then shrink to a small buffer
+ * for the in-game phase where messages are tiny (award acks, pings, etc).
+ * The +64 slack covers the "RESP=XX;" prefix and the "\r\n" terminator.
  */
 
-#define SERIAL_BUFFER_SIZE 65536
-u_char serial_buffer[SERIAL_BUFFER_SIZE];
-u_char *serial_buffer_head = serial_buffer;
+#define SERIAL_BUFFER_INITIAL_SIZE (100 * 1024 + 64)
+#define SERIAL_BUFFER_RUNTIME_SIZE (16 * 1024)
+u_char *serial_buffer = NULL;
+u_char *serial_buffer_head = NULL;
+uint32_t serial_buffer_size = 0;
 
 /*
- * Static Arrays for NES RAM and PRG-RAM/SRAM
+ * Dynamic arrays for NES RAM and PRG-RAM/SRAM mirroring.
+ * Allocated only when the game starts (right before core 1 is launched),
+ * so the heap is free for the big serial buffer during patch download.
  */
-volatile uint8_t nes_ram[2048];
-volatile uint8_t nes_sram[8192];
+#define NES_RAM_SIZE  2048
+#define NES_SRAM_SIZE 8192
+
+volatile uint8_t *nes_ram = NULL;
+volatile uint8_t *nes_sram = NULL;
 
 // Snapshot arrays to capture atomic state during OAMDMA (VBLANK)
-uint8_t nes_ram_snapshot[2048];
-uint8_t nes_sram_snapshot[8192];
+uint8_t *nes_ram_snapshot = NULL;
+uint8_t *nes_sram_snapshot = NULL;
 
 // flags for synchronization between cores
 volatile bool flag_internal_ram_written = false;
@@ -252,8 +264,8 @@ volatile bool flag_oamdma_written = false;
 
 #define BUFFER_SIZE 2048 // Tamanho de cada buffer
 
-volatile uint32_t buffer_a[BUFFER_SIZE];
-volatile uint32_t buffer_b[BUFFER_SIZE];
+volatile uint32_t *buffer_a = NULL;
+volatile uint32_t *buffer_b = NULL;
 
 // flags to control the buffers
 volatile bool read_A;
@@ -622,8 +634,8 @@ void handle_bus_to_detect_memory_writes()
                         nes_sram[last_address_value - 0x6000] = last_data_value;
                     } else if (last_address_value == 0x4014) {
                         if (!flag_oamdma_written) {
-                            memcpy(nes_ram_snapshot, (void*)nes_ram, 2048);
-                            memcpy(nes_sram_snapshot, (void*)nes_sram, 8192);
+                            memcpy(nes_ram_snapshot, (void*)nes_ram, NES_RAM_SIZE);
+                            memcpy(nes_sram_snapshot, (void*)nes_sram, NES_SRAM_SIZE);
                             flag_oamdma_written = true;
                         }
                     }
@@ -663,8 +675,8 @@ void handle_bus_to_detect_memory_writes()
                         nes_sram[last_address_value - 0x6000] = last_data_value;
                     } else if (last_address_value == 0x4014) {
                         if (!flag_oamdma_written) {
-                            memcpy(nes_ram_snapshot, (void*)nes_ram, 2048);
-                            memcpy(nes_sram_snapshot, (void*)nes_sram, 8192);
+                            memcpy(nes_ram_snapshot, (void*)nes_ram, NES_RAM_SIZE);
+                            memcpy(nes_sram_snapshot, (void*)nes_sram, NES_SRAM_SIZE);
                             flag_oamdma_written = true;
                         }
                     }
@@ -820,6 +832,110 @@ bool fifo_dequeue(FIFO_t *fifo, achievement_t *value)
     return true;
 }
 
+// Max MemAddr length before an achievement is silently stubbed to "0=0".
+// Merchandise Madness (FF1) has a ~51 KB MemAddr that exhausts SRAM during
+// rcheevos parse. Achievements stubbed this way never trigger on-device.
+#define MAX_MEMADDR_LEN 8192
+
+// Scan a rcheevos patch JSON string and replace any "MemAddr" value longer
+// than MAX_MEMADDR_LEN with "0=0", shifting the remainder left in-place.
+// Returns the new (shorter) string length; the buffer is null-terminated.
+static size_t filter_large_memaddr(char *json, size_t len)
+{
+    const char *needle = "\"MemAddr\":\"";
+    const size_t needle_len = 11;
+    char *pos = json;
+
+    while (1)
+    {
+        char *found = strstr(pos, needle);
+        if (!found)
+            break;
+
+        char *v_start = found + needle_len;
+        char *v_end = v_start;
+        char *json_end = json + len;
+
+        while (v_end < json_end && *v_end != '"')
+        {
+            if (*v_end == '\\')
+                v_end++;
+            v_end++;
+        }
+        if (v_end >= json_end)
+            break;
+
+        size_t v_len = v_end - v_start;
+        if (v_len > MAX_MEMADDR_LEN)
+        {
+            printf("FILTER: MemAddr len=%u > %u, stubbing to 0=0\n",
+                   (unsigned)v_len, (unsigned)MAX_MEMADDR_LEN);
+            // shift tail left (includes null terminator)
+            memmove(v_start + 3, v_end, (json_end - v_end) + 1);
+            memcpy(v_start, "0=0", 3);
+            len -= (v_len - 3);
+            json_end = json + len;
+            pos = v_start + 4; // skip past replacement and closing quote
+        }
+        else
+        {
+            pos = v_end + 1;
+        }
+    }
+    return len;
+}
+
+/**
+ * Allocate the NES RAM/SRAM mirrors and their snapshots. Called from the
+ * load-game callback before do_frame so read_memory_ingame has buffers to
+ * read from. These remain allocated for the lifetime of the program.
+ */
+static bool allocate_nes_mirror_buffers()
+{
+    nes_ram = (volatile uint8_t *)calloc(NES_RAM_SIZE, sizeof(uint8_t));
+    nes_sram = (volatile uint8_t *)calloc(NES_SRAM_SIZE, sizeof(uint8_t));
+    nes_ram_snapshot = (uint8_t *)calloc(NES_RAM_SIZE, sizeof(uint8_t));
+    nes_sram_snapshot = (uint8_t *)calloc(NES_SRAM_SIZE, sizeof(uint8_t));
+    return nes_ram && nes_sram && nes_ram_snapshot && nes_sram_snapshot;
+}
+
+/**
+ * Shrink the serial buffer to its runtime size and allocate the DMA
+ * ping-pong buffers used by core 1. Called from the main loop AFTER the
+ * load-game callback has returned and the current RESP= command has been
+ * fully consumed — never from inside the callback, since the http_callback
+ * caller still holds a pointer into the old serial buffer.
+ *
+ * Order matters for heap fragmentation: the 100KB serial buffer is freed
+ * FIRST so the resulting hole at the bottom of the heap is reused by the
+ * smaller allocations that follow.
+ */
+static bool swap_to_runtime_serial_and_dma_buffers()
+{
+    free(serial_buffer);
+    serial_buffer = NULL;
+    serial_buffer_head = NULL;
+    serial_buffer_size = 0;
+
+    serial_buffer = (u_char *)malloc(SERIAL_BUFFER_RUNTIME_SIZE);
+    buffer_a = (volatile uint32_t *)calloc(BUFFER_SIZE, sizeof(uint32_t));
+    buffer_b = (volatile uint32_t *)calloc(BUFFER_SIZE, sizeof(uint32_t));
+
+    if (!serial_buffer || !buffer_a || !buffer_b)
+    {
+        printf("FATAL: failed to allocate runtime buffers\r\n");
+        return false;
+    }
+
+    serial_buffer_size = SERIAL_BUFFER_RUNTIME_SIZE;
+    serial_buffer_head = serial_buffer;
+    memset(serial_buffer, '\0', serial_buffer_size);
+    return true;
+}
+
+// set by rc_client_load_game_callback; main loop performs the deferred swap
+volatile bool pending_runtime_swap = false;
+
 /**
  * RetroAchievements (rcheevos) related functions
  */
@@ -874,6 +990,18 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
             printf(aux);
             uart_puts(UART_ID, aux);
         }
+
+        // Patch is fully parsed by rcheevos at this point. Allocate the NES
+        // RAM/SRAM mirrors so read_memory_ingame has buffers to read from.
+        // The serial buffer swap and core 1 launch are deferred to the main
+        // loop because http_callback's caller still holds a pointer into the
+        // current serial_buffer.
+        if (!allocate_nes_mirror_buffers())
+        {
+            uart_puts(UART_ID, "FATAL_OOM\r\n");
+            while (1) tight_loop_contents();
+        }
+
         // Use the ingame memory reader directly since we have a full RAM mirror
         rc_client_set_read_memory_function(g_client, read_memory_ingame);
         rc_client_do_frame(g_client); // to trigger initial state evaluation
@@ -889,8 +1017,11 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
             uart_puts(UART_ID, aux);
         }
 
-        // lunch the core 1 to handle the memory write detection on the BUS
-        multicore_launch_core1(handle_bus_to_detect_memory_writes);
+        // Defer serial buffer shrink + DMA buffer alloc + core 1 launch to the
+        // main loop. We cannot free serial_buffer here because the caller of
+        // http_callback (above us on the stack) is parsing a command located
+        // inside it and still needs the post-command cleanup at the same offset.
+        pending_runtime_swap = true;
     }
     else
     {
@@ -1075,8 +1206,18 @@ int main()
     save_energy();
     reset_GPIO();
 
-    // clear serial buffer
-    memset(serial_buffer, '\0', SERIAL_BUFFER_SIZE);
+    // allocate the serial buffer FIRST so the 100KB block lands at the bottom of
+    // the heap. After the patch response is parsed it's freed and the cleared
+    // hole is reused for the smaller runtime buffers (see rc_client_load_game_callback).
+    serial_buffer = (u_char *)malloc(SERIAL_BUFFER_INITIAL_SIZE);
+    if (serial_buffer == NULL)
+    {
+        printf("FATAL: failed to allocate %u bytes for serial buffer\r\n", SERIAL_BUFFER_INITIAL_SIZE);
+        while (1) tight_loop_contents();
+    }
+    serial_buffer_size = SERIAL_BUFFER_INITIAL_SIZE;
+    serial_buffer_head = serial_buffer;
+    memset(serial_buffer, '\0', serial_buffer_size);
 
     uart_init(UART_ID, BAUD_RATE);
 
@@ -1229,8 +1370,8 @@ int main()
                 
                 now = time_us_64();                    
                 last_frame_processed = now;
-                memcpy(nes_ram_snapshot, (void*)nes_ram, 2048);
-                memcpy(nes_sram_snapshot, (void*)nes_sram, 8192);
+                memcpy(nes_ram_snapshot, (void*)nes_ram, NES_RAM_SIZE);
+                memcpy(nes_sram_snapshot, (void*)nes_sram, NES_SRAM_SIZE);
                 rc_client_do_frame(g_client);
                 // printf("DF1=%llu, ", diff);
                 last_frame_detection_strategy = 1;
@@ -1254,9 +1395,10 @@ int main()
             serial_buffer_head[0] = received_char;
             serial_buffer_head += 1;
             // if a command is too big, we clear the buffer
-            if (serial_buffer_head - serial_buffer == SERIAL_BUFFER_SIZE)
+            if ((uint32_t)(serial_buffer_head - serial_buffer) == serial_buffer_size)
             {
-                memset(serial_buffer, 0, SERIAL_BUFFER_SIZE);
+                memset(serial_buffer, 0, serial_buffer_size);
+                serial_buffer_head = serial_buffer;
                 printf("BUFFER_OVERFLOW\r\n");
                 continue;
             }
@@ -1315,7 +1457,53 @@ int main()
                             //     printf("RESP=%s\n", response_ptr);
                             // }
                             async_callback_data async_data = async_handlers[i].async_data;
-                            http_callback(http_code, response_ptr, strlen(response_ptr), &async_data, NULL);
+                            size_t body_len = strlen(response_ptr);
+
+                            // Strip any MemAddr values that would OOM rcheevos parse (e.g. FF1).
+                            // Must run before the shrink so the tight buffer is correctly sized.
+                            // if (serial_buffer_size > SERIAL_BUFFER_RUNTIME_SIZE)
+                            //     body_len = filter_large_memaddr(response_ptr, body_len);
+
+                            // Large response (likely the achievement patch — FF1 hits ~60KB)
+                            // while the serial buffer is still at the initial 100KB+. Free the
+                            // oversized buffer and malloc a tight one BEFORE invoking rcheevos.
+                            // realloc(shrink) in newlib-nano does NOT return the unused tail to
+                            // the heap, so we must malloc+memcpy+free to guarantee reclamation.
+                            if (body_len > 8192 && serial_buffer_size > SERIAL_BUFFER_RUNTIME_SIZE)
+                            {
+                                struct mallinfo mi_before = mallinfo();
+                                printf("HEAP before shrink: used=%d free=%d\n",
+                                       mi_before.uordblks, mi_before.fordblks);
+
+                                u_char *tight = (u_char *)malloc(body_len + 1);
+                                if (tight != NULL)
+                                {
+                                    memcpy(tight, response_ptr, body_len + 1);
+                                    free(serial_buffer); // guarantees 100KB returned to heap
+                                    serial_buffer = tight;
+                                    serial_buffer_size = body_len + 1;
+                                    response_ptr = (char *)serial_buffer;
+                                    serial_buffer_head = serial_buffer;
+                                    len = 0; // skip the post-command memset below
+
+                                    struct mallinfo mi_after = mallinfo();
+                                    printf("HEAP after shrink:  used=%d free=%d\n",
+                                           mi_after.uordblks, mi_after.fordblks);
+                                }
+                                else
+                                {
+                                    printf("HEAP shrink malloc failed, body_len=%u\n",
+                                           (unsigned)body_len);
+                                }
+                            }
+
+                            struct mallinfo mi_pre = mallinfo();
+                            printf("HEAP before http_callback: used=%d free=%d\n",
+                                   mi_pre.uordblks, mi_pre.fordblks);
+                            http_callback(http_code, response_ptr, body_len, &async_data, NULL);
+                            struct mallinfo mi_post = mallinfo();
+                            printf("HEAP after  http_callback: used=%d free=%d\n",
+                                   mi_post.uordblks, mi_post.fordblks);
                             break;
                         }
                     }
@@ -1387,6 +1575,21 @@ int main()
                 }
                 memset(serial_buffer, 0, len); // Clear the buffer since we are reading char by char
                 serial_buffer_head = serial_buffer;
+
+                // The load-game callback (triggered above via http_callback) sets
+                // this flag to request the serial buffer shrink + DMA alloc + core 1
+                // launch. We do it here, after the current command has been fully
+                // consumed and the cleanup above used the old (large) buffer safely.
+                if (pending_runtime_swap)
+                {
+                    pending_runtime_swap = false;
+                    if (!swap_to_runtime_serial_and_dma_buffers())
+                    {
+                        uart_puts(UART_ID, "FATAL_OOM\r\n");
+                        while (1) tight_loop_contents();
+                    }
+                    multicore_launch_core1(handle_bus_to_detect_memory_writes);
+                }
             }
         }
     }

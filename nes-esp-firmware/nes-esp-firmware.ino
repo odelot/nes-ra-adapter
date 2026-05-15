@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2026-03-14
-   Version:          1.2
+   Date:             2026-05-15
+   Version:          1.3
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -130,7 +130,7 @@
 #define SERIAL_COMM_CHUNK_SIZE 32
 #define SERIAL_COMM_TX_DELAY_MS 5
 
-#define SERIAL_MAX_PICO_BUFFER 32768
+#define SERIAL_MAX_PICO_BUFFER 102400
 /**
  * defines for the fifo used to store achievements to be showed on screen
  */
@@ -2432,7 +2432,7 @@ void handle_req_command(const char* cmd, size_t cmd_len) {
       Serial.print(F("PATCH LENGTH: "));
       Serial.println(response.length());
       
-      clean_json_field_str_value_buffer(response, "Description");
+      
       remove_json_field_buffer(response, "Warning");
       remove_json_field_buffer(response, "BadgeLockedURL");
       remove_json_field_buffer(response, "BadgeURL");
@@ -2440,10 +2440,15 @@ void handle_req_command(const char* cmd, size_t cmd_len) {
       remove_json_field_buffer(response, "Rarity");
       remove_json_field_buffer(response, "RarityHardcore");
       remove_json_field_buffer(response, "Author");
-      remove_json_field_buffer(response, "RichPresencePatch");
-      clean_json_field_array_value_buffer(response, "Leaderboards");
+      clean_json_field_array_value_buffer(response, "Leaderboards");      
       remove_achievements_with_flags_5_buffer(response);
-      
+      remove_achievements_with_long_MemAddr_buffer(response, 8192); // remove achievements with MemAddr > 8KB
+      if (response.length() > SERIAL_MAX_PICO_BUFFER) {
+        remove_json_field_buffer(response, "RichPresencePatch");
+      }
+      if (response.length() > SERIAL_MAX_PICO_BUFFER) {
+        clean_json_field_str_value_buffer(response, "Description");
+      }
       if (response.length() > SERIAL_MAX_PICO_BUFFER) {
         Serial.println(F("removing achievements with MemAddr > 4KB"));
         remove_achievements_with_long_MemAddr_buffer(response, 4096);
