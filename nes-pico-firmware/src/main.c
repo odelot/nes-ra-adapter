@@ -157,12 +157,32 @@
  * /RD marks the start of blanking - a vblank signal that works even for
  * games that run with NMI disabled and never write $4014.
  *
+ * IMPORTANT: mid-frame blanking exists in the wild - SMB3 briefly disables
+ * rendering at its status-bar IRQ split (scanline ~193), which makes /RD go
+ * quiet 3ms BEFORE the real vblank. Therefore the PPU detector (a) uses a
+ * ~400us quiet threshold to reject scanline-scale blanking, and (b) only
+ * DRIVES frame pacing when the NMI vector has been silent for 2+ frames -
+ * with NMI active it is diagnostics-only (VBPPU log line).
+ *
  * Disabled by default: without the wire the pin floats (an internal
  * pull-up keeps it inert, producing at most one spurious frame signal).
  * Enable only on boards that have the /RD wire installed.
  */
 // #define ENABLE_PPU_RD_VBLANK
 #define PPU_RD_PIN 26
+
+// Quiet time on PPU /RD before blanking is signaled, in PIO counter laps of
+// ~70ns each (2 ticks at clkdiv 7 @ 200MHz): 5714 laps = ~400us. Must stay
+// well below the ~1270us of real vblank quiet and above mid-frame blanks.
+#define PPU_RD_QUIET_LAPS 5714
+
+/**
+ * While defined, PPU /RD vblank events are observed and measured (VBPPU log
+ * line) but do NOT drive frame pacing - gameplay stays on the validated NMI
+ * path. Comment this out (with ENABLE_PPU_RD_VBLANK on) to let the PPU
+ * detector actually signal frames.
+ */
+#define PPU_RD_VBLANK_SHADOW_ONLY
 
 /**
  * Vblank detection instrumentation: core 1 collects timing statistics and
@@ -325,6 +345,28 @@ volatile uint32_t vbstat_stage_peak = 0;      // most writes staged during one s
 volatile uint32_t vbstat_stage_overflows = 0; // staging overflows (must stay 0)
 volatile uint32_t vbstat_resets = 0;          // RESET vector detections
 static uint32_t vbstat_timer_frames = 0;      // core 0 only: timer-fallback frames
+
+#ifdef ENABLE_PPU_RD_VBLANK
+/*
+ * PPU /RD detector comparison stats (VBPPU log line). Lets the PPU-based
+ * detection be validated side by side against the NMI-vector detection on
+ * the same frames: same period signature, plus the per-frame delta between
+ * the two markers. Rendering stops ~68us before the NMI fires, so with the
+ * ~400us quiet threshold the PPU event is expected ~330us AFTER the NMI,
+ * still inside vblank. Multi-ms deltas = a mid-frame blank fooled it.
+ */
+volatile uint32_t vbstat_ppu_pushes = 0;      // raw quiet-detector pushes
+volatile uint32_t vbstat_ppu_events = 0;      // accepted (deduped) events
+volatile uint32_t vbstat_ppu_period_sum_us = 0;
+volatile uint32_t vbstat_ppu_period_min_us = 0xFFFFFFFF; // windowed
+volatile uint32_t vbstat_ppu_period_max_us = 0;          // windowed
+volatile uint32_t vbstat_ppu_gaps = 0;        // periods > 25ms (no rendering)
+volatile uint32_t vbstat_ppu_spurious = 0;    // periods 10-15ms (mid-frame blanking)
+volatile uint32_t vbstat_ppu_nmi_pairs = 0;   // frames where both markers fired
+volatile uint32_t vbstat_ppu_nmi_delta_sum = 0; // sum of (NMI - PPU) deltas
+volatile uint32_t vbstat_ppu_nmi_delta_min = 0xFFFFFFFF; // windowed
+volatile uint32_t vbstat_ppu_nmi_delta_max = 0;          // windowed
+#endif
 #endif
 
 /**
@@ -539,9 +581,7 @@ void setup_PIO()
     gpio_init(PPU_RD_PIN);
     gpio_set_dir(PPU_RD_PIN, GPIO_IN);
     gpio_pull_up(PPU_RD_PIN); // keeps the pin inert if the /RD wire is absent
-    // 28 laps of 2 ticks (~70ns each at div 7) = ~2us of quiet on /RD marks blanking;
-    // rendering never rests longer than ~400ns, so 2us cannot false-trigger mid-frame
-    ppuQuiet_program_init(BUS_PIO, BUS_SM_PPU, PIO_offset_ppu, pio_div, PPU_RD_PIN, 28);
+    ppuQuiet_program_init(BUS_PIO, BUS_SM_PPU, PIO_offset_ppu, pio_div, PPU_RD_PIN, PPU_RD_QUIET_LAPS);
 #endif
 }
 
@@ -578,6 +618,17 @@ static bool nmi_vector_seen = false;
 // runs between them, the second push is only drained ~50us later, so the pair
 // must be deduplicated by time, not by the drain loop.
 static uint32_t last_nmi_event_us = 0;
+
+// accept at most one vblank frame signal per 10ms across ALL sources - the
+// NMI vector, the PPU /RD quiet detector and the $4014 fallback can all fire
+// for the same vblank, and only one snapshot per frame should be taken
+static uint32_t last_frame_signal_us = 0;
+
+#ifdef ENABLE_PPU_RD_VBLANK
+// timestamp of the last accepted PPU /RD quiet event ($2007 reads during
+// vblank re-trigger the quiet detector, so events are deduplicated by time)
+static uint32_t last_ppu_event_us = 0;
+#endif
 
 // apply one captured write-cycle word to the RAM/SRAM mirrors
 static inline void __not_in_flash_func(apply_bus_write)(uint32_t raw)
@@ -696,7 +747,14 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
 #endif
                 // $4014 (OAM DMA) as vblank fallback for games that run with NMI disabled
                 if (!nmi_vector_seen)
-                    frame_signal = true;
+                {
+                    uint32_t now_4014 = time_us_32();
+                    if (last_frame_signal_us == 0 || (now_4014 - last_frame_signal_us) > 10000)
+                    {
+                        frame_signal = true;
+                        last_frame_signal_us = now_4014;
+                    }
+                }
             }
         }
 
@@ -707,8 +765,63 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
             do
             {
                 (void)pio_sm_get(BUS_PIO, BUS_SM_PPU);
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                vbstat_ppu_pushes += 1;
+#endif
             } while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_PPU));
-            frame_signal = true;
+            uint32_t now_ppu = time_us_32();
+            // $2007 reads during vblank re-arm the quiet detector: accept at
+            // most one PPU vblank event per 10ms (extra pushes = retriggers)
+            if (last_ppu_event_us == 0 || (now_ppu - last_ppu_event_us) > 10000)
+            {
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                if (last_ppu_event_us != 0)
+                {
+                    uint32_t period = now_ppu - last_ppu_event_us;
+                    vbstat_ppu_period_sum_us += period;
+                    vbstat_ppu_events += 1;
+                    if (period < vbstat_ppu_period_min_us)
+                        vbstat_ppu_period_min_us = period;
+                    if (period > vbstat_ppu_period_max_us)
+                        vbstat_ppu_period_max_us = period;
+                    if (period > 25000)
+                        vbstat_ppu_gaps += 1;
+                    else if (period < 15000)
+                        vbstat_ppu_spurious += 1;
+                }
+                // delta from this frame's NMI marker: the PPU event should land
+                // ~(threshold - 68us) AFTER the NMI, still inside vblank. A
+                // multi-ms value means a mid-frame blank fooled the detector.
+                if (last_nmi_event_us != 0)
+                {
+                    uint32_t delta = now_ppu - last_nmi_event_us;
+                    if (delta < 5000)
+                    {
+                        vbstat_ppu_nmi_pairs += 1;
+                        vbstat_ppu_nmi_delta_sum += delta;
+                        if (delta < vbstat_ppu_nmi_delta_min)
+                            vbstat_ppu_nmi_delta_min = delta;
+                        if (delta > vbstat_ppu_nmi_delta_max)
+                            vbstat_ppu_nmi_delta_max = delta;
+                    }
+                }
+#endif
+#ifndef PPU_RD_VBLANK_SHADOW_ONLY
+                // the PPU detector only DRIVES frames when the NMI vector has
+                // been silent for 2+ frames (games rendering with NMI disabled);
+                // while NMI is active it must never compete with it, since
+                // mid-frame blanking can fire this detector before the vblank
+                if (last_nmi_event_us == 0 || (now_ppu - last_nmi_event_us) > 30000)
+                {
+                    if (last_frame_signal_us == 0 || (now_ppu - last_frame_signal_us) > 10000)
+                    {
+                        frame_signal = true;
+                        last_frame_signal_us = now_ppu;
+                    }
+                }
+#endif
+                last_ppu_event_us = now_ppu;
+            }
         }
 #endif
 
@@ -726,7 +839,11 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
             // legitimately re-fire this fast - NTSC 16.6ms, PAL 20ms)
             if (last_nmi_event_us == 0 || (now - last_nmi_event_us) > 10000)
             {
-                frame_signal = true;
+                if (last_frame_signal_us == 0 || (now - last_frame_signal_us) > 10000)
+                {
+                    frame_signal = true;
+                    last_frame_signal_us = now;
+                }
 #ifdef ENABLE_VBLANK_INSTRUMENTATION
                 if (last_nmi_event_us != 0)
                 {
@@ -1513,6 +1630,45 @@ int main()
                            (unsigned long)vbstat_oam_lat_max_us, (unsigned long)vbstat_timer_frames,
                            (unsigned long)vbstat_resets, (unsigned long)vbstat_stage_peak,
                            (unsigned long)vbstat_stage_overflows);
+#ifdef ENABLE_PPU_RD_VBLANK
+                    {
+                        static uint32_t vbppu_prev_events = 0;
+                        static uint32_t vbppu_prev_sum = 0;
+                        static uint32_t vbppu_prev_pairs = 0;
+                        static uint32_t vbppu_prev_delta_sum = 0;
+                        uint32_t p_events = vbstat_ppu_events;
+                        uint32_t p_sum = vbstat_ppu_period_sum_us;
+                        uint32_t p_pairs = vbstat_ppu_nmi_pairs;
+                        uint32_t p_dsum = vbstat_ppu_nmi_delta_sum;
+                        uint32_t d_events = p_events - vbppu_prev_events;
+                        uint32_t d_sum = p_sum - vbppu_prev_sum;
+                        uint32_t d_pairs = p_pairs - vbppu_prev_pairs;
+                        uint32_t d_dsum = p_dsum - vbppu_prev_delta_sum;
+                        vbppu_prev_events = p_events;
+                        vbppu_prev_sum = p_sum;
+                        vbppu_prev_pairs = p_pairs;
+                        vbppu_prev_delta_sum = p_dsum;
+                        uint32_t p_avg = (d_events > 0) ? (d_sum / d_events) : 0;
+                        uint32_t d_avg = (d_pairs > 0) ? (d_dsum / d_pairs) : 0;
+                        uint32_t p_mn = (vbstat_ppu_period_min_us == 0xFFFFFFFF) ? 0 : vbstat_ppu_period_min_us;
+                        uint32_t d_mn = (vbstat_ppu_nmi_delta_min == 0xFFFFFFFF) ? 0 : vbstat_ppu_nmi_delta_min;
+#ifdef PPU_RD_VBLANK_SHADOW_ONLY
+                        const char *ppu_mode = "SHADOW";
+#else
+                        const char *ppu_mode = "ACTIVE";
+#endif
+                        printf("VBPPU(%s): pushes=%lu events=%lu avg=%luus min=%luus max=%luus gaps=%lu spurious=%lu | nmi->ppu pairs=%lu avg=%luus min=%luus max=%luus\n",
+                               ppu_mode, (unsigned long)vbstat_ppu_pushes, (unsigned long)d_events,
+                               (unsigned long)p_avg, (unsigned long)p_mn, (unsigned long)vbstat_ppu_period_max_us,
+                               (unsigned long)vbstat_ppu_gaps, (unsigned long)vbstat_ppu_spurious,
+                               (unsigned long)d_pairs, (unsigned long)d_avg,
+                               (unsigned long)d_mn, (unsigned long)vbstat_ppu_nmi_delta_max);
+                        vbstat_ppu_period_min_us = 0xFFFFFFFF;
+                        vbstat_ppu_period_max_us = 0;
+                        vbstat_ppu_nmi_delta_min = 0xFFFFFFFF;
+                        vbstat_ppu_nmi_delta_max = 0;
+                    }
+#endif
                     // reset the windowed min/max (benign race with core 1)
                     vbstat_period_min_us = 0xFFFFFFFF;
                     vbstat_period_max_us = 0;

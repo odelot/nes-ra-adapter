@@ -176,7 +176,6 @@ The adapter uses two microcontrollers working together:
   - Precise vblank detection: a dedicated PIO state machine watches the CPU fetching the NMI vector ($FFFA/$FFFB), marking the exact start of vblank — validated on real hardware at 60.099Hz with ±5µs jitter. Games that never do OAM DMA (e.g. Mike Tyson's Punch-Out!!) are now frame-accurate instead of relying on simulated frames. Writes to $4014 and a timer remain as fallbacks for games running with NMI disabled.
   - Console RESET detection via the RESET vector ($FFFC/$FFFD): pressing the console reset button now resets the rcheevos runtime state (hit counts, indicators), the same way emulators do — no more power cycling.
   - Truly atomic RAM snapshots: memory snapshots are taken at vblank start with write staging, guaranteeing point-in-time consistency for achievement evaluation.
-  - Optional universal vblank detection via a PPU /RD wire (compile-time toggle `ENABLE_PPU_RD_VBLANK`, requires a hardware mod).
   - Built-in instrumentation (`ENABLE_VBLANK_INSTRUMENTATION`, VBSTAT log) to validate frame detection timing in the field.
 - **Version 1.3 (2026-05-15)**
   - Major RAM usage optimization on the Pico: the circular memory buffer was replaced by static mirrors of the NES RAM and cartridge SRAM with atomic snapshots taken during OAM DMA.

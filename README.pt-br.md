@@ -176,7 +176,6 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
   - Detecção precisa de vblank: uma state machine dedicada do PIO observa a CPU buscando o vetor de NMI ($FFFA/$FFFB), marcando o início exato do vblank — validado em hardware real a 60,099Hz com jitter de ±5µs. Jogos que nunca fazem OAM DMA (ex.: Mike Tyson's Punch-Out!!) agora são precisos frame a frame, em vez de dependerem de frames simulados. Escritas em $4014 e um timer permanecem como fallbacks para jogos que rodam com NMI desabilitado.
   - Detecção de RESET do console via vetor de RESET ($FFFC/$FFFD): apertar o botão de reset do console agora reinicia o estado de runtime do rcheevos (contadores de hits, indicadores), da mesma forma que os emuladores fazem — sem precisar desligar e ligar.
   - Snapshots de RAM verdadeiramente atômicos: os snapshots de memória são tirados no início do vblank com estacionamento de escritas, garantindo consistência pontual para a avaliação das conquistas.
-  - Detecção universal de vblank opcional via um fio no PPU /RD (toggle de compilação `ENABLE_PPU_RD_VBLANK`, requer modificação de hardware).
   - Instrumentação embutida (`ENABLE_VBLANK_INSTRUMENTATION`, log VBSTAT) para validar o timing da detecção de frames em campo.
 - **Versão 1.3 (2026-05-15)**
   - Grande otimização no uso de RAM do Pico: o buffer circular de memória foi substituído por espelhos estáticos da RAM do NES e da SRAM do cartucho, com snapshots atômicos tirados durante o OAM DMA.
