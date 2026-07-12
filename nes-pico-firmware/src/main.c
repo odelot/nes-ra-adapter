@@ -12,18 +12,24 @@
     * Core 0 handles CRC calculation, executes the rcheevos routines, and manages serial
       communication with the ESP32 (primarily for Internet connectivity).
 
-    * Core 1 monitors the bus for specific memory addresses and sends relevant data to
-      Core 0. We intercept the bus using PIO and apply a heuristic to detect stable values
-      during write operations. To ensure data integrity, we use DMA to transfer the PIO data
-      into a ping-pong buffer, which is then processed by Core 1. When a memory address of
-      interest is identified, the data is forwarded to Core 0.
+    * Core 1 monitors the bus using three PIO state machines and no DMA:
+      - SM0 captures exactly one bus snapshot per CPU write cycle (sampled inside the
+        data-valid window of M2 high) and core 1 drains the FIFO directly, updating
+        static mirrors of the NES RAM and cartridge SRAM.
+      - SM1 watches for reads of the NMI vector ($FFFA/$FFFB): a match marks the exact
+        start of vblank, when core 1 takes an atomic snapshot of the mirrors and
+        signals core 0 to run a rcheevos frame.
+      - SM2 watches for reads of the RESET vector ($FFFC/$FFFD) to detect a console
+        reset and reset the rcheevos runtime state.
+      Writes to $4014 (OAM DMA) are kept as a vblank fallback for games that run with
+      NMI disabled, and a timer-based fallback covers forced-blank periods.
 
     Inter-core communication is managed via a circular buffer. Please note that the available
     space for serial communication is limited to around 32KB, which restricts the size of
     the achievement list response.
 
-   Date:             2026-05-15
-   Version:          1.3
+   Date:             2026-07-12
+   Version:          1.4
    By odelot
 
    Libs used:
@@ -61,7 +67,6 @@
 #include "hardware/uart.h"
 #include "hardware/clocks.h"
 #include "hardware/pio.h"
-#include "hardware/dma.h"
 #include "hardware/structs/systick.h"
 #include "hardware/timer.h"
 #include "hardware/spi.h"
@@ -82,13 +87,16 @@
 #include "rc_version.h"
 #include "rc_internal.h"
 
-#define FIRMWARE_VERSION "1.1"
+#define FIRMWARE_VERSION "1.4"
 
 // run at 200mhz can save energy and need to be tested if it is stable - it saves ~0.010A
 #define RUN_AT_200MHZ
 
 #define BUS_PIO pio0
-#define BUS_SM 0
+#define BUS_SM_WRITE 0 // one snapshot per CPU write cycle
+#define BUS_SM_NMI 1   // NMI vector fetch watcher ($FFFA/$FFFB)
+#define BUS_SM_RESET 2 // RESET vector fetch watcher ($FFFC/$FFFD)
+#define BUS_SM_PPU 3   // PPU /RD quiescence watcher (ENABLE_PPU_RD_VBLANK)
 
 #define UART_ID uart0
 #define BAUD_RATE 115200
@@ -139,6 +147,34 @@
  */
 
 #define ENABLE_INTERNAL_WEB_APP_SUPPORT
+
+/**
+ * OPTIONAL: universal vblank detection via PPU /RD quiescence.
+ *
+ * Requires a HARDWARE WIRE from the cartridge slot PPU /RD signal to
+ * PPU_RD_PIN (through a ~1k series resistor). The PPU fetches from the
+ * CHR bus every ~186ns while rendering, so a sustained quiet period on
+ * /RD marks the start of blanking - a vblank signal that works even for
+ * games that run with NMI disabled and never write $4014.
+ *
+ * Disabled by default: without the wire the pin floats (an internal
+ * pull-up keeps it inert, producing at most one spurious frame signal).
+ * Enable only on boards that have the /RD wire installed.
+ */
+// #define ENABLE_PPU_RD_VBLANK
+#define PPU_RD_PIN 26
+
+/**
+ * Vblank detection instrumentation: core 1 collects timing statistics and
+ * core 0 prints a VBSTAT line on the USB serial every 10s. Interpretation:
+ *   - avg NMI-to-NMI period must be ~16639us (NTSC) / ~19997us (PAL) with
+ *     min/max within a few tens of us; gaps/spurious must stay 0 in gameplay
+ *     (gaps appear legitimately in menus/loads that disable NMI).
+ *   - every $4014 write should land inside the vblank window right after our
+ *     NMI marker (in_vb == oam, lat_max < ~2300us) - physical ground truth.
+ * Comment this define out for release builds.
+ */
+#define ENABLE_VBLANK_INSTRUMENTATION
 
 const uint16_t NES_D[8] = {NES_D0, NES_D1, NES_D2, NES_D3, NES_D4, NES_D5, NES_D6, NES_D7};
 const uint16_t NES_A[15] = {NES_A00, NES_A01, NES_A02, NES_A03, NES_A04, NES_A05, NES_A06, NES_A07, NES_A08, NES_A09, NES_A10, NES_A11, NES_A12, NES_A13, NES_A14};
@@ -218,8 +254,11 @@ static const uint32_t crc_32_tab[] = {
  * PIO Bus Watcher global variables
  */
 
-volatile io_ro_32 *rxf;
-uint PIO_offset;
+uint PIO_offset_write;
+uint PIO_offset_vector;
+#ifdef ENABLE_PPU_RD_VBLANK
+uint PIO_offset_ppu;
+#endif
 mutex_t cpu_bus_mutex;
 
 /*
@@ -248,32 +287,45 @@ uint32_t serial_buffer_size = 0;
 volatile uint8_t *nes_ram = NULL;
 volatile uint8_t *nes_sram = NULL;
 
-// Snapshot arrays to capture atomic state during OAMDMA (VBLANK)
+// Snapshot arrays to capture atomic state at vblank (NMI vector fetch)
 uint8_t *nes_ram_snapshot = NULL;
 uint8_t *nes_sram_snapshot = NULL;
 
 // flags for synchronization between cores
 volatile bool flag_internal_ram_written = false;
-volatile bool flag_oamdma_written = false;
+volatile bool flag_vblank_detected = false; // set by core 1 on NMI vector fetch (or $4014 fallback)
+volatile bool flag_reset_detected = false;  // set by core 1 on RESET vector fetch
 
 /*
- * global variables for using DMA to read the BUS
- * we use two buffers to ping-pong between them
- * when one is being feed, the other is being read
+ * Staging area used while taking an atomic snapshot of the RAM/SRAM mirrors.
+ * The snapshot memcpy takes ~50-70us; bus writes captured meanwhile are parked
+ * here (instead of being applied) so the snapshot is a true point-in-time copy,
+ * then replayed onto the live mirrors afterwards. 256 entries cover the
+ * theoretical worst case of one write per CPU cycle for the whole snapshot.
  */
+#define WRITE_STAGE_SIZE 256
+static uint32_t write_stage[WRITE_STAGE_SIZE];
 
-#define BUFFER_SIZE 2048 // Tamanho de cada buffer
-
-volatile uint32_t *buffer_a = NULL;
-volatile uint32_t *buffer_b = NULL;
-
-// flags to control the buffers
-volatile bool read_A;
-volatile bool reading_A;
-volatile bool reading_B;
-
-// DMA channels
-int dma_chan_0, dma_chan_1;
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+/*
+ * Vblank instrumentation counters. Written by core 1 inside the bus loop,
+ * sampled and reported by core 0. Debug-grade: cross-core races only risk a
+ * stale sample in one report, never corruption of the detection itself.
+ */
+volatile uint32_t vbstat_nmi_periods = 0;     // completed NMI-to-NMI intervals
+volatile uint32_t vbstat_period_sum_us = 0;   // period accumulator (wraps; deltas used)
+volatile uint32_t vbstat_period_min_us = 0xFFFFFFFF; // windowed (reset each report)
+volatile uint32_t vbstat_period_max_us = 0;          // windowed (reset each report)
+volatile uint32_t vbstat_gaps = 0;            // periods > 25ms (NMI off or missed)
+volatile uint32_t vbstat_spurious = 0;        // periods < 15ms (double detection)
+volatile uint32_t vbstat_oam_writes = 0;      // every $4014 write seen on the bus
+volatile uint32_t vbstat_oam_in_vblank = 0;   // ...landing <=2.5ms after our NMI marker
+volatile uint32_t vbstat_oam_lat_max_us = 0;  // worst NMI->$4014 latency (windowed)
+volatile uint32_t vbstat_stage_peak = 0;      // most writes staged during one snapshot
+volatile uint32_t vbstat_stage_overflows = 0; // staging overflows (must stay 0)
+volatile uint32_t vbstat_resets = 0;          // RESET vector detections
+static uint32_t vbstat_timer_frames = 0;      // core 0 only: timer-fallback frames
+#endif
 
 /**
  * RetroAchievements (rcheevos) related global variables
@@ -460,124 +512,143 @@ void set_GPIO_dominate_bus()
     gpio_pull_down(NES_M2);
 }
 
-/**
- * DMA functions
- */
-
-// DMA interruption handler, not in memory to speed it up
-void __not_in_flash_func(dma_handler)()
-{
-
-    // Did channel0 triggered the irq?
-    if (dma_channel_get_irq0_status(dma_chan_0))
-    {
-        // Clear the irq
-        dma_channel_acknowledge_irq0(dma_chan_0);
-        // Rewrite the write address without triggering the channel
-        dma_channel_set_write_addr(dma_chan_0, buffer_a, false);
-        if (reading_B)
-        {
-            // we will start using buffer_b while it is still being read <o>
-            printf("m_"); // m de merda // shit // we should avoid this to happen
-        }
-    }
-    else
-    {
-        // Clear the irq
-        dma_channel_acknowledge_irq0(dma_chan_1);
-        // Rewrite the write address without triggering the channel
-        dma_channel_set_write_addr(dma_chan_1, buffer_b, false);
-        if (reading_A)
-        {
-            printf("m_"); // m de merda // shit // we should avoid this to happen
-        }
-    }
-}
-
-// setup both dma channels
-void setup_dma()
-{
-    memset((void *)buffer_a, 0, BUFFER_SIZE * sizeof(uint32_t));
-    memset((void *)buffer_b, 0, BUFFER_SIZE * sizeof(uint32_t));
-
-    dma_chan_0 = dma_claim_unused_channel(true);
-    dma_chan_1 = dma_claim_unused_channel(true);
-
-    // channel 0 config
-    dma_channel_config c0 = dma_channel_get_default_config(dma_chan_0);
-    channel_config_set_transfer_data_size(&c0, DMA_SIZE_32);
-    channel_config_set_read_increment(&c0, false);
-    channel_config_set_write_increment(&c0, true);
-    channel_config_set_dreq(&c0, pio_get_dreq(BUS_PIO, BUS_SM, false));
-    channel_config_set_chain_to(&c0, dma_chan_1); // after full, active channel 1
-    channel_config_set_high_priority(&c0, true);
-    channel_config_set_enable(&c0, true);
-
-    dma_channel_set_irq0_enabled(dma_chan_0, true); // Enable IRQ 0
-
-    // channel 1 config
-    dma_channel_config c1 = dma_channel_get_default_config(dma_chan_1);
-    channel_config_set_transfer_data_size(&c1, DMA_SIZE_32);
-    channel_config_set_read_increment(&c1, false);
-    channel_config_set_write_increment(&c1, true);
-    channel_config_set_dreq(&c1, pio_get_dreq(BUS_PIO, BUS_SM, false));
-    channel_config_set_chain_to(&c1, dma_chan_0); // after full, active channel 0
-    channel_config_set_high_priority(&c1, true);
-    channel_config_set_enable(&c1, true);
-
-    dma_channel_set_irq0_enabled(dma_chan_1, true); // Enable IRQ 0
-
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
-    irq_set_enabled(DMA_IRQ_0, true);
-    irq_set_priority(DMA_IRQ_0, 0);
-
-    dma_channel_configure(
-        dma_chan_1, &c1,
-        buffer_b,              // Target
-        &BUS_PIO->rxf[BUS_SM], // Source: FIFO from PIO
-        BUFFER_SIZE,           // Transfer size
-        false);
-
-    dma_channel_configure(
-        dma_chan_0, &c0,
-        buffer_a,              // Target
-        &BUS_PIO->rxf[BUS_SM], // Source: FIFO from PIO
-        BUFFER_SIZE,           // Transfer size
-        true);
-}
-
 /*
  * PIO functions
  */
 
-// initialize the PIO program
+// initialize the PIO programs: write sniffer + NMI/RESET vector watchers
 void setup_PIO()
 {
 
     for (int i = 0; i < 26; i++) // reset all GPIOs connected to NES
         gpio_init(i);
-    PIO_offset = pio_add_program(BUS_PIO, &memoryBus_program);
+    PIO_offset_write = pio_add_program(BUS_PIO, &memoryBusWrite_program);
+    PIO_offset_vector = pio_add_program(BUS_PIO, &vectorWatch_program);
 #ifdef RUN_AT_200MHZ
     set_sys_clock_khz(200000, true);
-    memoryBus_program_init(BUS_PIO, BUS_SM, PIO_offset, (float)7.0f); // div = 7 for 200mhz
+    const float pio_div = 7.0f; // 200mhz / 7 = ~35ns per PIO tick
 #else
     set_sys_clock_khz(250000, true);
-    memoryBus_program_init(BUS_PIO, BUS_SM, offset, (float)9.0f); // div = 9 for 250mhz
+    const float pio_div = 9.0f; // 250mhz / 9 = ~36ns per PIO tick
+#endif
+    memoryBusWrite_program_init(BUS_PIO, BUS_SM_WRITE, PIO_offset_write, pio_div);
+    vectorWatch_program_init(BUS_PIO, BUS_SM_NMI, PIO_offset_vector, pio_div, VECTOR_WATCH_NMI_TARGET);
+    vectorWatch_program_init(BUS_PIO, BUS_SM_RESET, PIO_offset_vector, pio_div, VECTOR_WATCH_RESET_TARGET);
+#ifdef ENABLE_PPU_RD_VBLANK
+    PIO_offset_ppu = pio_add_program(BUS_PIO, &ppuQuiet_program);
+    gpio_init(PPU_RD_PIN);
+    gpio_set_dir(PPU_RD_PIN, GPIO_IN);
+    gpio_pull_up(PPU_RD_PIN); // keeps the pin inert if the /RD wire is absent
+    // 28 laps of 2 ticks (~70ns each at div 7) = ~2us of quiet on /RD marks blanking;
+    // rendering never rests longer than ~400ns, so 2us cannot false-trigger mid-frame
+    ppuQuiet_program_init(BUS_PIO, BUS_SM_PPU, PIO_offset_ppu, pio_div, PPU_RD_PIN, 28);
 #endif
 }
 
 void stop_PIO()
 {
-    pio_sm_set_enabled(BUS_PIO, BUS_SM, false);                  // disable PIO
-    pio_sm_clear_fifos(BUS_PIO, BUS_SM);                         // clear FIFO
-    pio_sm_restart(BUS_PIO, BUS_SM);                             // restart PIO        )
-    pio_remove_program(BUS_PIO, &memoryBus_program, PIO_offset); // remove program from PIO
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_WRITE, false);
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_NMI, false);
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_RESET, false);
+    pio_sm_clear_fifos(BUS_PIO, BUS_SM_WRITE);
+    pio_sm_clear_fifos(BUS_PIO, BUS_SM_NMI);
+    pio_sm_clear_fifos(BUS_PIO, BUS_SM_RESET);
+    pio_sm_restart(BUS_PIO, BUS_SM_WRITE);
+    pio_sm_restart(BUS_PIO, BUS_SM_NMI);
+    pio_sm_restart(BUS_PIO, BUS_SM_RESET);
+    pio_remove_program(BUS_PIO, &memoryBusWrite_program, PIO_offset_write);
+    pio_remove_program(BUS_PIO, &vectorWatch_program, PIO_offset_vector);
+#ifdef ENABLE_PPU_RD_VBLANK
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_PPU, false);
+    pio_sm_clear_fifos(BUS_PIO, BUS_SM_PPU);
+    pio_sm_restart(BUS_PIO, BUS_SM_PPU);
+    pio_remove_program(BUS_PIO, &ppuQuiet_program, PIO_offset_ppu);
+#endif
 }
 
-// Memory buffer functions removed in favor of static RAM mirror
+/*
+ * Core 1: bus monitoring
+ */
 
-// handle detection of memory writes in the NES BUS, using DMA and PIO
-void handle_bus_to_detect_memory_writes()
+// set once the first NMI vector fetch is seen; disables the $4014 vblank fallback
+static bool nmi_vector_seen = false;
+
+// timestamp of the last accepted NMI vblank event. The vector fetch reads
+// $FFFA and $FFFB on consecutive cycles (two FIFO pushes); when the snapshot
+// runs between them, the second push is only drained ~50us later, so the pair
+// must be deduplicated by time, not by the drain loop.
+static uint32_t last_nmi_event_us = 0;
+
+// apply one captured write-cycle word to the RAM/SRAM mirrors
+static inline void __not_in_flash_func(apply_bus_write)(uint32_t raw)
+{
+    if ((raw >> 25) & 0x1) // R/W re-check (the PIO already filters reads; belt and suspenders)
+        return;
+    uint16_t address = (raw >> 8) & 0x7FFF;
+    uint8_t data = raw & 0xFF;
+    if (address < 0x2000)
+    {
+        nes_ram[address & 0x07FF] = data;
+        if (!flag_internal_ram_written)
+        {
+            flag_internal_ram_written = true;
+        }
+    }
+    else if (address >= 0x6000 && address < 0x8000)
+    {
+        nes_sram[address - 0x6000] = data;
+    }
+}
+
+// drain the write FIFO into the staging area (used while snapshotting)
+static inline void __not_in_flash_func(stage_pending_writes)(int *staged)
+{
+    while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_WRITE))
+    {
+        uint32_t raw = pio_sm_get(BUS_PIO, BUS_SM_WRITE);
+        if (*staged < WRITE_STAGE_SIZE)
+        {
+            write_stage[(*staged)++] = raw;
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+            if ((uint32_t)(*staged) > vbstat_stage_peak)
+                vbstat_stage_peak = (uint32_t)(*staged);
+#endif
+        }
+        else
+        {
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+            vbstat_stage_overflows += 1;
+#endif
+            apply_bus_write(raw); // staging full (never expected) - degrade gracefully
+        }
+    }
+}
+
+// take a point-in-time snapshot of the mirrors. The copy is chunked, parking
+// writes that arrive meanwhile in the staging area, so (a) the 8-deep write
+// FIFO never overflows during the ~60us copy and (b) the snapshot is atomic:
+// staged writes are replayed onto the live mirrors only after the copy ends.
+static void __not_in_flash_func(snapshot_mirrors_atomic)()
+{
+    int staged = 0;
+    const uint32_t chunk = 512;
+    for (uint32_t offset = 0; offset < NES_RAM_SIZE; offset += chunk)
+    {
+        memcpy(nes_ram_snapshot + offset, (const uint8_t *)nes_ram + offset, chunk);
+        stage_pending_writes(&staged);
+    }
+    for (uint32_t offset = 0; offset < NES_SRAM_SIZE; offset += chunk)
+    {
+        memcpy(nes_sram_snapshot + offset, (const uint8_t *)nes_sram + offset, chunk);
+        stage_pending_writes(&staged);
+    }
+    for (int i = 0; i < staged; i += 1)
+        apply_bus_write(write_stage[i]);
+}
+
+// core 1 entry point: drain the PIO FIFOs, keep the RAM/SRAM mirrors fresh and
+// signal core 0 on vblank (NMI vector fetch / $4014 fallback) and console reset
+void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
 {
     mutex_init(&cpu_bus_mutex);
     mutex_enter_blocking(&cpu_bus_mutex); // make sure core 1 is fully dedicated to handle the BUS
@@ -588,108 +659,125 @@ void handle_bus_to_detect_memory_writes()
     sleep_ms(10);
 
     setup_PIO();
-    setup_dma();
 
-    // enabble PIO
-    pio_sm_set_enabled(BUS_PIO, BUS_SM, true);
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_WRITE, true);
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_NMI, true);
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_RESET, true);
+#ifdef ENABLE_PPU_RD_VBLANK
+    pio_sm_set_enabled(BUS_PIO, BUS_SM_PPU, true);
+#endif
 
-    uint32_t raw_bus_data;
-    uint16_t address_value = 0;
-    uint16_t last_address_value = 0;
-    uint8_t data_value = 0;
-    uint8_t last_data_value = 0;
-    uint8_t rw = 0;
-    uint8_t last_rw = 0;
-    read_A = true;
-    reading_A = false;
-    reading_B = false;
+    uint32_t last_reset_push_us = 0;
+    bool frame_signal = false;
 
-    // handle DMA ping-pong and process the buffer that is not being feed
     while (1)
     {
-        if (!dma_channel_is_busy(dma_chan_0) && read_A)
+        // apply captured write cycles to the RAM/SRAM mirrors
+        while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_WRITE))
         {
-            // get begin timestamp
-            // uint32_t begin = time_us_32();
-
-            reading_A = true;
-            read_A = false;
-            for (int i = 0; i < BUFFER_SIZE; i += 1)
+            uint32_t raw = pio_sm_get(BUS_PIO, BUS_SM_WRITE);
+            apply_bus_write(raw);
+            if (((raw >> 8) & 0x7FFF) == 0x4014 && !((raw >> 25) & 0x1))
             {
-
-                raw_bus_data = buffer_a[i];
-                address_value = (raw_bus_data >> 8) & 0x7FFF;
-                data_value = raw_bus_data;
-                rw = (raw_bus_data >> 25) & 0x1;
-
-                // detect a stable value that was being written and update the RAM mirror
-                if (address_value != last_address_value && last_rw == 0)
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                // ground truth: OAM DMA is started by game code inside vblank,
+                // so it must land shortly after our NMI-vector vblank marker
+                vbstat_oam_writes += 1;
+                if (nmi_vector_seen)
                 {
-                    if (last_address_value < 0x2000) {
-                        nes_ram[last_address_value & 0x07FF] = last_data_value;
-                        if (!flag_internal_ram_written) {
-                            flag_internal_ram_written = true;
-                        }
-                    } else if (last_address_value >= 0x6000 && last_address_value < 0x8000) {
-                        nes_sram[last_address_value - 0x6000] = last_data_value;
-                    } else if (last_address_value == 0x4014) {
-                        if (!flag_oamdma_written) {
-                            memcpy(nes_ram_snapshot, (void*)nes_ram, NES_RAM_SIZE);
-                            memcpy(nes_sram_snapshot, (void*)nes_sram, NES_SRAM_SIZE);
-                            flag_oamdma_written = true;
-                        }
+                    uint32_t lat = time_us_32() - last_nmi_event_us;
+                    if (lat <= 2500)
+                    {
+                        vbstat_oam_in_vblank += 1;
+                        if (lat > vbstat_oam_lat_max_us)
+                            vbstat_oam_lat_max_us = lat;
                     }
                 }
-                last_address_value = address_value;
-                last_data_value = data_value;
-                last_rw = rw;
+#endif
+                // $4014 (OAM DMA) as vblank fallback for games that run with NMI disabled
+                if (!nmi_vector_seen)
+                    frame_signal = true;
             }
-            reading_A = false;
-
-            // get end timestamp
-            // uint32_t end = time_us_32();
-            // printf("T: %d\n", end - begin);
         }
-        else if (!dma_channel_is_busy(dma_chan_1) && !read_A)
+
+#ifdef ENABLE_PPU_RD_VBLANK
+        // PPU /RD went quiet = blanking started (works with NMI disabled too)
+        if (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_PPU))
         {
-            // get begin timestamp
-            // uint32_t begin = time_us_32();
-
-            reading_B = true;
-            read_A = true;
-            for (int i = 0; i < BUFFER_SIZE; i += 1)
+            do
             {
-                raw_bus_data = buffer_b[i];
-                address_value = (raw_bus_data >> 8) & 0x7FFF;
-                data_value = raw_bus_data;
-                rw = (raw_bus_data >> 25) & 0x1;
-                // detect a stable value that was being written and update the RAM mirror
-                if (address_value != last_address_value && last_rw == 0)
-                {
-                    if (last_address_value < 0x2000) {
-                        nes_ram[last_address_value & 0x07FF] = last_data_value;
-                        if (!flag_internal_ram_written) {
-                            flag_internal_ram_written = true;
-                        }
-                    } else if (last_address_value >= 0x6000 && last_address_value < 0x8000) {
-                        nes_sram[last_address_value - 0x6000] = last_data_value;
-                    } else if (last_address_value == 0x4014) {
-                        if (!flag_oamdma_written) {
-                            memcpy(nes_ram_snapshot, (void*)nes_ram, NES_RAM_SIZE);
-                            memcpy(nes_sram_snapshot, (void*)nes_sram, NES_SRAM_SIZE);
-                            flag_oamdma_written = true;
-                        }
-                    }
-                }
-                last_address_value = address_value;
-                last_data_value = data_value;
-                last_rw = rw;
-            }
-            reading_B = false;
+                (void)pio_sm_get(BUS_PIO, BUS_SM_PPU);
+            } while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_PPU));
+            frame_signal = true;
+        }
+#endif
 
-            // get end timestamp
-            // uint32_t end = time_us_32();
-            // printf("T: %d\n", end - begin);
+        // NMI vector fetch ($FFFA/$FFFB read) = vblank start
+        if (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_NMI))
+        {
+            do
+            {
+                (void)pio_sm_get(BUS_PIO, BUS_SM_NMI);
+            } while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_NMI));
+            nmi_vector_seen = true;
+            uint32_t now = time_us_32();
+            // accept at most one vblank event per 10ms: dedupes the $FFFA/$FFFB
+            // pair when the snapshot ran between the two pushes (NMI can never
+            // legitimately re-fire this fast - NTSC 16.6ms, PAL 20ms)
+            if (last_nmi_event_us == 0 || (now - last_nmi_event_us) > 10000)
+            {
+                frame_signal = true;
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                if (last_nmi_event_us != 0)
+                {
+                    uint32_t period = now - last_nmi_event_us;
+                    vbstat_period_sum_us += period;
+                    vbstat_nmi_periods += 1;
+                    if (period < vbstat_period_min_us)
+                        vbstat_period_min_us = period;
+                    if (period > vbstat_period_max_us)
+                        vbstat_period_max_us = period;
+                    if (period > 25000)
+                        vbstat_gaps += 1;
+                    else if (period < 15000)
+                        vbstat_spurious += 1;
+                }
+#endif
+                last_nmi_event_us = now;
+            }
+        }
+
+        // RESET vector fetch ($FFFC/$FFFD read) = console reset. A genuine fetch
+        // reads both bytes on consecutive cycles (~559ns apart); require the pair
+        // to reject stray data/dummy reads of a single vector byte.
+        if (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_RESET))
+        {
+            int pushes = 0;
+            do
+            {
+                (void)pio_sm_get(BUS_PIO, BUS_SM_RESET);
+                pushes += 1;
+            } while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_RESET));
+            uint32_t now = time_us_32();
+            if (pushes >= 2 || (now - last_reset_push_us) <= 3)
+            {
+                flag_reset_detected = true;
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                vbstat_resets += 1;
+#endif
+            }
+            last_reset_push_us = now;
+        }
+
+        // on vblank: snapshot the mirrors and signal core 0 to run a rcheevos frame
+        if (frame_signal)
+        {
+            frame_signal = false;
+            if (!flag_vblank_detected)
+            {
+                snapshot_mirrors_atomic();
+                flag_vblank_detected = true;
+            }
         }
     }
 }
@@ -900,17 +988,16 @@ static bool allocate_nes_mirror_buffers()
 }
 
 /**
- * Shrink the serial buffer to its runtime size and allocate the DMA
- * ping-pong buffers used by core 1. Called from the main loop AFTER the
- * load-game callback has returned and the current RESP= command has been
- * fully consumed — never from inside the callback, since the http_callback
- * caller still holds a pointer into the old serial buffer.
+ * Shrink the serial buffer to its runtime size. Called from the main loop
+ * AFTER the load-game callback has returned and the current RESP= command has
+ * been fully consumed — never from inside the callback, since the
+ * http_callback caller still holds a pointer into the old serial buffer.
  *
- * Order matters for heap fragmentation: the 100KB serial buffer is freed
- * FIRST so the resulting hole at the bottom of the heap is reused by the
- * smaller allocations that follow.
+ * The 100KB serial buffer is freed FIRST so the hole at the bottom of the
+ * heap is reused by the smaller allocation that follows. (The bus sniffer
+ * needs no buffers: core 1 drains the PIO FIFOs directly, no DMA involved.)
  */
-static bool swap_to_runtime_serial_and_dma_buffers()
+static bool swap_to_runtime_serial_buffer()
 {
     free(serial_buffer);
     serial_buffer = NULL;
@@ -918,12 +1005,10 @@ static bool swap_to_runtime_serial_and_dma_buffers()
     serial_buffer_size = 0;
 
     serial_buffer = (u_char *)malloc(SERIAL_BUFFER_RUNTIME_SIZE);
-    buffer_a = (volatile uint32_t *)calloc(BUFFER_SIZE, sizeof(uint32_t));
-    buffer_b = (volatile uint32_t *)calloc(BUFFER_SIZE, sizeof(uint32_t));
 
-    if (!serial_buffer || !buffer_a || !buffer_b)
+    if (!serial_buffer)
     {
-        printf("FATAL: failed to allocate runtime buffers\r\n");
+        printf("FATAL: failed to allocate runtime serial buffer\r\n");
         return false;
     }
 
@@ -1017,10 +1102,10 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
             uart_puts(UART_ID, aux);
         }
 
-        // Defer serial buffer shrink + DMA buffer alloc + core 1 launch to the
-        // main loop. We cannot free serial_buffer here because the caller of
-        // http_callback (above us on the stack) is parsing a command located
-        // inside it and still needs the post-command cleanup at the same offset.
+        // Defer serial buffer shrink + core 1 launch to the main loop. We
+        // cannot free serial_buffer here because the caller of http_callback
+        // (above us on the stack) is parsing a command located inside it and
+        // still needs the post-command cleanup at the same offset.
         pending_runtime_swap = true;
     }
     else
@@ -1238,7 +1323,7 @@ int main()
 
     // debug info
     unsigned int frame_counter = 0;
-    uint8_t last_frame_detection_strategy = 0; // 0 for oamdma, 1 for timed based
+    uint8_t last_frame_detection_strategy = 0; // 0 for bus event (NMI vector / $4014), 1 for timer based
 
     // main loop for core 0 - handle UART communication and rcheevos processing
     while (true)
@@ -1335,14 +1420,27 @@ int main()
                 uart_puts(UART_ID, "NES_RESETED\r\n");
             }
 
-            // if OAMDMA was written, we can assume a frame is being processed
-            if (flag_oamdma_written)
+            // console reset detected (RESET vector fetch on the bus): reset the
+            // rcheevos runtime state (hit counts, primed indicators), the same
+            // way emulators do when the user resets the machine
+            if (flag_reset_detected)
             {
-                flag_oamdma_written = false;
-                // best place to detect a frame so far                    
-                u_int64_t delta = 8000; // ~ half of the frame time in microseconds for 60hz 
+                flag_reset_detected = false;
+                if (nes_reseted != 0) // ignore the boot reset that starts the game
+                {
+                    printf("RESET vector fetch - rc_client_reset\n");
+                    rc_client_reset(g_client);
+                }
+            }
+
+            // vblank detected by core 1 (NMI vector fetch, or $4014 fallback)
+            if (flag_vblank_detected)
+            {
+                flag_vblank_detected = false;
+                // best place to detect a frame so far
+                u_int64_t delta = 8000; // ~ half of the frame time in microseconds for 60hz
                 if (last_frame_detection_strategy == 0) {
-                    delta = 2500; // ~ 15% of the frame time in microseconds for 60hz - we want to be more strict when we detect frames using the OAM DMA address monitoring, to avoid false positives
+                    delta = 2500; // ~ 15% of the frame time in microseconds for 60hz - we want to be more strict when we detect frames using the NMI/OAMDMA bus monitoring, to avoid false positives
                 }
                 if (diff > (FRAME_TIME_US - delta))  
                 { // inside a frame window, so process the frame
@@ -1359,9 +1457,9 @@ int main()
                 }
             }
 
-            // simulate a frame every 16750ms (for 60hz) if we cannot detect any frame using the OAMDMA address monitoring
-            // example of need: punchout / chip n dale rescue rangers
-            u_int64_t window = FRAME_TIME_US << 1; // two frames time window when coming from OAM DMA strategy
+            // simulate a frame every ~16667us (for 60hz) if we cannot detect any frame on the bus
+            // (NMI disabled and no OAM DMA, e.g. during forced-blank loading screens)
+            u_int64_t window = FRAME_TIME_US << 1; // two frames time window when coming from the bus event strategy
             if (last_frame_detection_strategy == 1) {
                 window = FRAME_TIME_US; 
             }
@@ -1375,17 +1473,53 @@ int main()
                 rc_client_do_frame(g_client);
                 // printf("DF1=%llu, ", diff);
                 last_frame_detection_strategy = 1;
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                vbstat_timer_frames += 1;
+#endif
                 diff = 0;
-                //memory dump during a frame for DEBUG 
+                //memory dump during a frame for DEBUG
                 // for (int i = 0; i < unique_memory_addresses_count; i += 1)
                 // {
                 //     if (unique_memory_addresses[i] == 0x0017)
                 //     {
-                //         printf("DF1=%03X ", memory_data[i]); //detect frame heuristic number 2 - time based 
+                //         printf("DF1=%03X ", memory_data[i]); //detect frame heuristic number 2 - time based
                 // }
                 // printf ("\n");
             }
 
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+            // report vblank detection statistics every 10s (USB serial only)
+            {
+                static uint32_t vbstat_last_report_ms = 0;
+                static uint32_t vbstat_prev_periods = 0;
+                static uint32_t vbstat_prev_sum = 0;
+                uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+                if (now_ms - vbstat_last_report_ms >= 10000)
+                {
+                    vbstat_last_report_ms = now_ms;
+                    uint32_t periods = vbstat_nmi_periods;
+                    uint32_t sum = vbstat_period_sum_us;
+                    uint32_t d_periods = periods - vbstat_prev_periods;
+                    uint32_t d_sum = sum - vbstat_prev_sum;
+                    vbstat_prev_periods = periods;
+                    vbstat_prev_sum = sum;
+                    uint32_t avg = (d_periods > 0) ? (d_sum / d_periods) : 0;
+                    uint32_t mn = (vbstat_period_min_us == 0xFFFFFFFF) ? 0 : vbstat_period_min_us;
+                    printf("VBSTAT: nmi_periods=%lu avg=%luus min=%luus max=%luus gaps=%lu spurious=%lu | oam=%lu in_vb=%lu lat_max=%luus | timer_frames=%lu | resets=%lu | stage_peak=%lu ovf=%lu\n",
+                           (unsigned long)d_periods, (unsigned long)avg,
+                           (unsigned long)mn, (unsigned long)vbstat_period_max_us,
+                           (unsigned long)vbstat_gaps, (unsigned long)vbstat_spurious,
+                           (unsigned long)vbstat_oam_writes, (unsigned long)vbstat_oam_in_vblank,
+                           (unsigned long)vbstat_oam_lat_max_us, (unsigned long)vbstat_timer_frames,
+                           (unsigned long)vbstat_resets, (unsigned long)vbstat_stage_peak,
+                           (unsigned long)vbstat_stage_overflows);
+                    // reset the windowed min/max (benign race with core 1)
+                    vbstat_period_min_us = 0xFFFFFFFF;
+                    vbstat_period_max_us = 0;
+                    vbstat_oam_lat_max_us = 0;
+                }
+            }
+#endif
         }
         // handle UART communication, byte by byte
         if (uart_is_readable(UART_ID))
@@ -1577,13 +1711,13 @@ int main()
                 serial_buffer_head = serial_buffer;
 
                 // The load-game callback (triggered above via http_callback) sets
-                // this flag to request the serial buffer shrink + DMA alloc + core 1
-                // launch. We do it here, after the current command has been fully
+                // this flag to request the serial buffer shrink + core 1 launch.
+                // We do it here, after the current command has been fully
                 // consumed and the cleanup above used the old (large) buffer safely.
                 if (pending_runtime_swap)
                 {
                     pending_runtime_swap = false;
-                    if (!swap_to_runtime_serial_and_dma_buffers())
+                    if (!swap_to_runtime_serial_buffer())
                     {
                         uart_puts(UART_ID, "FATAL_OOM\r\n");
                         while (1) tight_loop_contents();

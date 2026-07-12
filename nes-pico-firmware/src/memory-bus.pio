@@ -1,29 +1,149 @@
-.program memoryBus
+; NES bus sniffer - PIO programs
+;
+; Pin map (GPIO): 0-7 = D0-D7, 8-22 = A0-A14, 23 = M2, 24 = /ROMSEL, 25 = R/W
+;
+; NTSC bus cycle is ~559ns with M2 high for the last ~350ns (PAL: ~601ns/~375ns).
+; The 6502 drives write data on the bus early in the M2-high phase (tMDS), and
+; address/R./W are stable before M2 rises, so a single well-placed sample per
+; cycle replaces the old free-running oversampling loop (~9.5M words/s -> at
+; most one word per write cycle, ~890K/s worst case during OAM DMA).
 
+; ---------------------------------------------------------------------------
+; memoryBusWrite: push one 32-bit bus snapshot per WRITE cycle.
+;
+; Loop runs once per M2 cycle. R/W is re-checked via jmp pin AFTER the M2
+; rising edge (R/W is only guaranteed stable for the current cycle once M2 is
+; high - sampling it earlier races the previous cycle's value). The [4] delay
+; places the capture ~250ns after the M2 edge at clkdiv 7 @ 200MHz: late
+; enough for write data to be valid, early enough to precede the M2 fall.
+; ---------------------------------------------------------------------------
+.program memoryBusWrite
 
 .wrap_target
-    wait 0 pin 25   ; wait for R/W to go LOW
-    wait 1 pin 23   ; wait for M2 to go HIGH
-    in pins 32      ;capture 
+    wait 1 pin 23        ; M2 rising edge - new bus cycle, address/R/W stable
+    jmp pin, skip [4]    ; R/W high = read cycle - skip (delay tunes sample point)
+    in pins, 32          ; write cycle: capture D0-D7/A0-A14/M2/ROMSEL/RW
+skip:
+    wait 0 pin 23        ; consume the rest of this cycle (one iteration per M2)
+.wrap
+
+; ---------------------------------------------------------------------------
+; vectorWatch: push a word whenever the CPU READS a specific address pair.
+;
+; Y holds the match target and is preloaded by vectorWatch_program_init.
+; The comparison covers A1-A14 + M2 + /ROMSEL (in_base = 9, 16 bits), so one
+; state machine matches an even/odd vector pair in ROM space:
+;   $FFFA/$FFFB (NMI)   -> target 0x7FFD   (vblank start)
+;   $FFFC/$FFFD (RESET) -> target 0x7FFE   (console reset)
+; /ROMSEL is part of the match so cartridge SRAM reads at $7FFA-$7FFD can
+; never alias the vectors. A genuine vector fetch reads both bytes on
+; consecutive cycles, producing two pushes ~559ns apart - software can use
+; that pairing to reject stray data/dummy reads of a single vector byte.
+; ---------------------------------------------------------------------------
+.program vectorWatch
+
+.wrap_target
+top:
+    wait 0 pin 14        ; M2 low  (pin index relative to in_base 9: GPIO 23)
+    wait 1 pin 14        ; M2 rising edge - address and /ROMSEL settle now
+    jmp pin, check       ; R/W high = read cycle - worth comparing
+    jmp top
+check:
+    mov isr, null        ; clear residue from previous non-matching cycle
+    in pins, 16          ; A1-A14 (bits 0-13), M2 (bit 14), /ROMSEL (bit 15)
+    mov x, isr
+    jmp x!=y, top
+    push noblock         ; match: signal the CPU (word content is the match)
+.wrap
+
+; ---------------------------------------------------------------------------
+; ppuQuiet: universal vblank detector via PPU /RD quiescence (optional).
+;
+; Requires a wire from the cartridge slot PPU /RD signal to a Pico GPIO
+; (through ~1k series). During rendering the PPU fetches CHR/NT data every
+; ~186ns, so /RD never rests high for long. When /RD stays high for the
+; threshold preloaded in Y (~2us), blanking has started: push one word.
+; The trailing wait swallows the rest of the blank period so at most one
+; push per quiet window is produced. Works even for games that run with
+; NMI disabled and never touch $4014 (the cases the other detectors miss).
+;
+; in_base and jmp pin must BOTH point at the /RD GPIO.
+; ---------------------------------------------------------------------------
+.program ppuQuiet
+
+.wrap_target
+restart:
+    mov x, y             ; reload the quiet-time counter
+count:
+    jmp pin, still_high
+    jmp restart          ; /RD low: PPU is fetching, so we are in rendering
+still_high:
+    jmp x--, count       ; /RD still high: keep counting (2 ticks per lap)
+    push noblock         ; quiet for the whole threshold: blanking started
+    wait 0 pin 0         ; sleep until rendering resumes
 .wrap
 
 % c-sdk {
 
-void memoryBus_program_init(PIO pio, uint sm, uint offset, float div) {
-    pio_sm_config c = memoryBus_program_get_default_config(offset);
-    sm_config_set_clkdiv(&c, div); //Clock
+// GPIO assignments duplicated from main.c (kept in sync by hand)
+#define MEMBUS_PIN_M2 23
+#define MEMBUS_PIN_RW 25
 
-    //GPIO setup    
+// vectorWatch match targets: (/ROMSEL=0) << 15 | (M2=1) << 14 | A14..A1
+#define VECTOR_WATCH_NMI_TARGET   0x7FFDu  /* $FFFA/$FFFB */
+#define VECTOR_WATCH_RESET_TARGET 0x7FFEu  /* $FFFC/$FFFD */
+
+static inline void memoryBusWrite_program_init(PIO pio, uint sm, uint offset, float div)
+{
+    pio_sm_config c = memoryBusWrite_program_get_default_config(offset);
+    sm_config_set_clkdiv(&c, div);
+
     pio_sm_set_consecutive_pindirs(pio, sm, 0, 26, false);
-    
-    sm_config_set_in_pins(&c, 0);
-    
-    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
 
-    sm_config_set_in_shift(&c, true, true, 0);
-    
+    sm_config_set_in_pins(&c, 0);               // capture D0..RW at GPIO 0-25
+    sm_config_set_jmp_pin(&c, MEMBUS_PIN_RW);   // jmp pin tests R/W
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_in_shift(&c, true, true, 32); // shift right, autopush at 32
+
     pio_sm_init(pio, sm, offset, &c);
-    
+}
+
+static inline void vectorWatch_program_init(PIO pio, uint sm, uint offset, float div, uint32_t target)
+{
+    pio_sm_config c = vectorWatch_program_get_default_config(offset);
+    sm_config_set_clkdiv(&c, div);
+
+    sm_config_set_in_pins(&c, 9);                 // A1 first: compare A1-A14+M2+/ROMSEL
+    sm_config_set_jmp_pin(&c, MEMBUS_PIN_RW);     // jmp pin tests R/W
+    // no RX join: the TX fifo is needed below to preload Y, and 4 RX entries
+    // are plenty (a vector fetch pushes at most 2 words per frame)
+    sm_config_set_in_shift(&c, false, false, 32); // shift left, no autopush (manual push)
+
+    pio_sm_init(pio, sm, offset, &c);
+
+    // preload Y with the match target: TX fifo -> OSR -> Y
+    pio_sm_put_blocking(pio, sm, target);
+    pio_sm_exec(pio, sm, pio_encode_pull(false, true));
+    pio_sm_exec(pio, sm, pio_encode_mov(pio_y, pio_osr));
+}
+
+// quiet_laps: number of 2-tick counter laps that /RD must stay high before
+// blanking is signaled (~70ns per lap at clkdiv 7 @ 200MHz; 28 laps = ~2us)
+static inline void ppuQuiet_program_init(PIO pio, uint sm, uint offset, float div, uint rd_gpio, uint32_t quiet_laps)
+{
+    pio_sm_config c = ppuQuiet_program_get_default_config(offset);
+    sm_config_set_clkdiv(&c, div);
+
+    sm_config_set_in_pins(&c, rd_gpio); // "wait 0 pin 0" watches /RD
+    sm_config_set_jmp_pin(&c, rd_gpio); // jmp pin also tests /RD
+    sm_config_set_in_shift(&c, false, false, 32);
+
+    pio_sm_init(pio, sm, offset, &c);
+
+    // preload Y with the quiet threshold: TX fifo -> OSR -> Y
+    pio_sm_put_blocking(pio, sm, quiet_laps);
+    pio_sm_exec(pio, sm, pio_encode_pull(false, true));
+    pio_sm_exec(pio, sm, pio_encode_mov(pio_y, pio_osr));
 }
 
 %}

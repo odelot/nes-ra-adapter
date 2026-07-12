@@ -137,8 +137,8 @@ The adapter uses two microcontrollers working together:
 - **Game Identification:** Reads part of the cartridge to calculate the CRC and identify the game.
 - **Memory Monitoring:** Uses two cores to monitor the bus and process writes using the rcheevos library:
   - **Core 0:** Calculates the CRC, runs rcheevos routines, and manages serial communication with the ESP32.
-  - **Core 1:** Uses PIO to intercept the bus and detect stable values in write operations. Employs DMA to transfer data to a ping-pong buffer and forwards relevant addresses to Core 0 via a circular buffer.
-- **Note:** Serial communication has a limit of approximately 32KB, restricting the size of the achievement list response.
+  - **Core 1:** Uses three PIO state machines (no DMA): one captures exactly one bus snapshot per CPU write cycle and keeps static mirrors of the NES RAM and cartridge SRAM up to date; one watches the CPU fetching the NMI vector ($FFFA/$FFFB) to mark the exact start of vblank (with $4014 and timer-based fallbacks for games that run with NMI disabled); and one watches the RESET vector ($FFFC/$FFFD) to detect console resets. At each vblank, core 1 takes an atomic snapshot of the memory mirrors and signals core 0 to run a rcheevos frame.
+- **Note:** During game load the Pico reserves ~100KB of RAM for the achievement list response; the buffer is shrunk once the game starts.
 
 ### ESP32
 
@@ -153,13 +153,11 @@ The adapter uses two microcontrollers working together:
 
 - **Testing with different games:** The adapter has been tested with about 50 games, and issues were detected in 2. Check the [compatibility page](https://github.com/odelot/nes-ra-adapter/blob/main/Compatibility.md) for more details. We are working to improve compatibility.
 
-- **Frame and reset detection:** It is not possible to detect a frame by simply inspecting cartridge signals. A heuristic is used, which has shown good results so far, but there is no guarantee it will work for all achievements. Additionally, console RESET detection is not yet implemented, requiring the console to be turned off and on for a reset.
+- **Server Response Size:** During game load the Pico reserves ~100KB of RAM for the RetroAchievements response, and the ESP32 can relay up to ~62KB after stripping unused fields. The source-code of a AWS Lambda function is available (misc folder) to remove unnecessary fields or reduce the achievement list when a set exceeds these limits.
 
-- **Server Response Size:** RAM is limited to 32KB for storing the RetroAchievements response, which includes the list of achievements and memory addresses to monitor. The source-code of a AWS Lambda function is available (misc folder) to remove unnecessary fields or reduce the achievement list, ensuring the response fits within this limit.
+- **Rare Limitation: Some Games May Be Unmasterable** A single achievement with an extremely large definition can exceed the Raspberry Pi Pico's RAM when expanded by the rcheevos library (one Final Fantasy achievement alone expands to ~140KB of runtime structures — more than the RP2040 can hold together with everything else). Out of 50 games tested this affected two titles (FF1 lost a missable achievement and Guardian Legend lost some big achievements). A future hardware revision based on the RP2350 (520KB of RAM) will remove this limit.
 
-- **Rare Limitation: Some Games May Be Unmasterable** It’s possible that the ESP32 (with a ~62KB limit) not only removes unused attributes from achievements, but also filters out very large achievements if the full list exceeds the Raspberry Pi Pico’s 32KB limit. This means some games might not be fully masterable using the adapter. In future versions, I’ll look into adding a warning for the user when this filtering occurs. (out of 50 games tested, this filtering happened in two - FF1 lost a missible achievement and Guardian Legend lost some big achievements)
-
-- **Leaderboards is disabled** To shrink data between ESP32 and Pico and because we are using a heuristic to detect frames, the leaderboard feature is disabled.
+- **Leaderboards is disabled** To shrink data between ESP32 and Pico, the leaderboard feature is disabled. Now that frame detection is precise (v1.4), re-enabling leaderboards is on the roadmap.
 
 ---
 
@@ -173,6 +171,17 @@ The adapter uses two microcontrollers working together:
 
 ## Version History
 
+- **Version 1.4 (2026-07-12)**
+  - Complete rewrite of the bus monitoring engine on the Pico: the PIO now captures exactly one sample per CPU write cycle (replacing ~10x oversampling and the stable-value heuristic), DMA and its ping-pong buffers were removed (~16KB of RAM freed), and core 1 drains the PIO FIFOs directly with much lower latency.
+  - Precise vblank detection: a dedicated PIO state machine watches the CPU fetching the NMI vector ($FFFA/$FFFB), marking the exact start of vblank — validated on real hardware at 60.099Hz with ±5µs jitter. Games that never do OAM DMA (e.g. Mike Tyson's Punch-Out!!) are now frame-accurate instead of relying on simulated frames. Writes to $4014 and a timer remain as fallbacks for games running with NMI disabled.
+  - Console RESET detection via the RESET vector ($FFFC/$FFFD): pressing the console reset button now resets the rcheevos runtime state (hit counts, indicators), the same way emulators do — no more power cycling.
+  - Truly atomic RAM snapshots: memory snapshots are taken at vblank start with write staging, guaranteeing point-in-time consistency for achievement evaluation.
+  - Optional universal vblank detection via a PPU /RD wire (compile-time toggle `ENABLE_PPU_RD_VBLANK`, requires a hardware mod).
+  - Built-in instrumentation (`ENABLE_VBLANK_INSTRUMENTATION`, VBSTAT log) to validate frame detection timing in the field.
+- **Version 1.3 (2026-05-15)**
+  - Major RAM usage optimization on the Pico: the circular memory buffer was replaced by static mirrors of the NES RAM and cartridge SRAM with atomic snapshots taken during OAM DMA.
+  - The serial buffer is now allocated dynamically: ~100KB during the achievement list download (up from 32KB), shrunk after the game loads — supporting much larger achievement sets.
+  - Includes the 1.2-alpha fix for a cartridge reading problem affecting Castlevania.
 - **Version 1.1 (2026-02-01)** 
   - Major RAM usage optimization on the ESP32 (over 40% savings), increasing the maximum payload size and allowing support for more games, including Super Mario Bros. 3, which became unsupported in version 1.0 after receiving additional achievements at the end of 2025.
   - Added a progress indicator in the upper-left corner of the screen (earned achievements / total achievements) and a Wi-Fi signal strength indicator in the upper-right corner.
