@@ -635,6 +635,11 @@ static inline void __not_in_flash_func(apply_bus_write)(uint32_t raw)
 {
     if ((raw >> 25) & 0x1) // R/W re-check (the PIO already filters reads; belt and suspenders)
         return;
+    // /ROMSEL low = CPU is addressing $8000-$FFFF (mapper registers / ROM).
+    // A0-A14 of those writes alias RAM/SRAM addresses (e.g. MMC3 $8001 bank
+    // data looks like $0001), so they must never reach the mirrors.
+    if (!((raw >> 24) & 0x1))
+        return;
     uint16_t address = (raw >> 8) & 0x7FFF;
     uint8_t data = raw & 0xFF;
     if (address < 0x2000)
@@ -728,7 +733,9 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
         {
             uint32_t raw = pio_sm_get(BUS_PIO, BUS_SM_WRITE);
             apply_bus_write(raw);
-            if (((raw >> 8) & 0x7FFF) == 0x4014 && !((raw >> 25) & 0x1))
+            // $4014 check also requires /ROMSEL high: a mapper write to $C014
+            // has the same A0-A14 and must not count as OAM DMA
+            if (((raw >> 8) & 0x7FFF) == 0x4014 && !((raw >> 25) & 0x1) && ((raw >> 24) & 0x1))
             {
 #ifdef ENABLE_VBLANK_INSTRUMENTATION
                 // ground truth: OAM DMA is started by game code inside vblank,
