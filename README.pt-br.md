@@ -192,7 +192,7 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 Todos estão convidados a colaborar com o projeto!  
 - Envie suas melhorias e pull requests via GitHub.  
-- Participe do nosso canal no Discord: [https://discord.gg/baM7y3xbsA](https://discord.gg/baM7y3xbsA)  
+- Participe do nosso canal no Discord: [https://discord.gg/57v2GPHMx6](https://discord.gg/57v2GPHMx6)  
 - Ajude-nos [comprando um café](https://buymeacoffee.com/nes.ra.adapter) para auxiliar nos custos dos protótipos de hardware.
 
 ---
