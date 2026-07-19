@@ -136,8 +136,8 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 - **Identificação do Jogo:** Lê parte do cartucho para calcular o CRC e identificar o jogo.
 - **Monitoramento de Memória:** Utiliza dois núcleos para monitorar o barramento e processar escritas usando a biblioteca rcheevos:
   - **Core 0:** Calcula o CRC, executa rotinas do rcheevos e gerencia a comunicação serial com o ESP32.
-  - **Core 1:** Usa PIO para interceptar o barramento e detectar valores estáveis em operações de escrita. Emprega DMA para transferir os dados para um buffer ping-pong e encaminha os endereços relevantes para o Core 0 via buffer circular.
-- **Observação:** A comunicação serial possui limite de aproximadamente 32KB, restringindo o tamanho da resposta da lista de conquistas.
+  - **Core 1:** Usa três state machines do PIO (sem DMA): uma captura exatamente uma amostra do barramento por ciclo de escrita da CPU e mantém espelhos estáticos da RAM do NES e da SRAM do cartucho; uma observa a CPU buscando o vetor de NMI ($FFFA/$FFFB) para marcar o início exato do vblank (com fallbacks via $4014 e timer para jogos que rodam com NMI desabilitado); e uma observa o vetor de RESET ($FFFC/$FFFD) para detectar reset do console. A cada vblank, o core 1 tira um snapshot atômico dos espelhos de memória e sinaliza o core 0 para processar um frame do rcheevos.
+- **Observação:** Durante o carregamento do jogo, o Pico reserva ~100KB de RAM para a resposta com a lista de conquistas; o buffer é reduzido assim que o jogo começa.
 
 ### ESP32
 
@@ -152,13 +152,11 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 - **Testes com diferentes jogos**: Testamos o adaptador com cerca de 50 jogos e detectamos problemas em 2. Consulte a [página de compatibilidade](https://github.com/odelot/nes-ra-adapter/blob/main/Compatibility.md) para mais detalhes. Estamos trabalhando para melhorar a compatibilidade.
 
-- **Detecção de frame e reset**: Não conseguimos detectar um frame apenas inspecionando os sinais do cartucho. Utilizamos uma heurística que, até agora, tem mostrado bons resultados, mas não há garantia de que funcione para todas as conquistas. Além disso, a detecção de RESET do console ainda não está implementada, exigindo que o console seja desligado e ligado para reinicialização.
+- **Tamanho da Resposta do Servidor**: Durante o carregamento do jogo, o Pico reserva ~100KB de RAM para a resposta do RetroAchievements, e o ESP32 consegue repassar até ~62KB após remover campos não utilizados. O código-fonte de uma função AWS Lambda está disponível (pasta misc) para remover campos desnecessários ou reduzir a lista de conquistas quando um set exceder esses limites.
 
-- **Tamanho da Resposta do Servidor**: A RAM disponível para armazenar a resposta do RetroAchievements, que contém a lista de conquistas e endereços de memória a serem monitorados, é limitada a 32KB. Publicaremos um código-fonte de uma função AWS Lambda para remover campos desnecessários ou reduzir a lista de conquistas, garantindo que a resposta caiba dentro desse limite.
+- **Limitação rara: alguns jogos podem ser impossíveis de Masterizar** Uma única conquista com definição extremamente grande pode exceder a RAM do Raspberry Pi Pico ao ser expandida pela biblioteca rcheevos (uma conquista do Final Fantasy, sozinha, expande para ~140KB de estruturas em tempo de execução — mais do que o RP2040 consegue comportar junto com todo o resto). De 50 jogos testados, isso afetou dois títulos (FF1 perdeu um achievement missable e Guardian Legend perdeu alguns achievements grandes). Uma futura revisão de hardware baseada no RP2350 (520KB de RAM) removerá esse limite.
 
-- **Limitação rara: alguns jogos podem ser impossíveis de Masterizar** É possível que o ESP32 (com um limite de ~62 KB) não apenas remova atributos não utilizados das conquistas, mas também filtre conquistas muito grandes se a lista completa exceder o limite de 32 KB do Raspberry Pi Pico. Isso significa que alguns jogos podem não ser totalmente masterizáveis ​​usando o adaptador. Em versões futuras, analisarei a possibilidade de adicionar um aviso ao usuário quando essa filtragem ocorrer. (de 50 jogos testados, essa filtragem aconteceu em dois - FF1 perdeu um achievement missible e Guardian Legend perdeu alguns achievements grandes)
-
-- **Placar de líderes desativado** Para reduzir os dados entre o ESP32 e o Pico e como estamos usando uma heurística para detectar quadros, o recurso de placar de líderes está desativado.
+- **Placar de líderes desativado** Para reduzir os dados entre o ESP32 e o Pico, o recurso de placar de líderes está desativado. Agora que a detecção de frames é precisa (v1.4), reativar os placares de líderes está no roadmap.
 
 
 ---
@@ -173,6 +171,16 @@ O adaptador utiliza dois microcontroladores trabalhando em conjunto:
 
 ## Histórico de Versões
 
+- **Versão 1.4 (2026-07-12)**
+  - Reescrita completa do motor de monitoramento do barramento no Pico: o PIO agora captura exatamente uma amostra por ciclo de escrita da CPU (substituindo o oversampling de ~10x e a heurística de valor estável), o DMA e seus buffers ping-pong foram removidos (~16KB de RAM liberados), e o core 1 drena os FIFOs do PIO diretamente, com latência muito menor.
+  - Detecção precisa de vblank: uma state machine dedicada do PIO observa a CPU buscando o vetor de NMI ($FFFA/$FFFB), marcando o início exato do vblank — validado em hardware real a 60,099Hz com jitter de ±5µs. Jogos que nunca fazem OAM DMA (ex.: Mike Tyson's Punch-Out!!) agora são precisos frame a frame, em vez de dependerem de frames simulados. Escritas em $4014 e um timer permanecem como fallbacks para jogos que rodam com NMI desabilitado.
+  - Detecção de RESET do console via vetor de RESET ($FFFC/$FFFD): apertar o botão de reset do console agora reinicia o estado de runtime do rcheevos (contadores de hits, indicadores), da mesma forma que os emuladores fazem — sem precisar desligar e ligar.
+  - Snapshots de RAM verdadeiramente atômicos: os snapshots de memória são tirados no início do vblank com estacionamento de escritas, garantindo consistência pontual para a avaliação das conquistas.
+  - Instrumentação embutida (`ENABLE_VBLANK_INSTRUMENTATION`, log VBSTAT) para validar o timing da detecção de frames em campo.
+- **Versão 1.3 (2026-05-15)**
+  - Grande otimização no uso de RAM do Pico: o buffer circular de memória foi substituído por espelhos estáticos da RAM do NES e da SRAM do cartucho, com snapshots atômicos tirados durante o OAM DMA.
+  - O buffer serial agora é alocado dinamicamente: ~100KB durante o download da lista de conquistas (antes 32KB), reduzido após o carregamento do jogo — suportando sets de conquistas muito maiores.
+  - Inclui a correção da 1.2-alpha para um problema de leitura de cartucho que afetava o Castlevania.
 - **Versão 1.1 (2026-02-01)** - 
   - Grande otimização no uso de RAM do ESP32 (mais de 40% de economia), aumentando o tamanho máximo do payload e permitindo suporte a mais jogos, incluindo Super Mario Bros. 3, que havia deixado de ser compatível na versão 1.0 após receber novas conquistas no final de 2025.
   - Adicionado um indicador de progresso no canto superior esquerdo da tela (conquistas obtidas / conquistas totais) e um indicador de intensidade do sinal Wi-Fi no canto superior direito.

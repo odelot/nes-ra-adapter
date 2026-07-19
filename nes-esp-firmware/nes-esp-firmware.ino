@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2026-05-15
-   Version:          1.3
+   Date:             2026-07-19
+   Version:          1.4
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -94,6 +94,8 @@
 #include <Wire.h>
 #include <Ticker.h>
 #include "CharBufferStream.h"
+#include "JsonCleaner.h"
+#include "PatchStreamFilter.h"
 
 #ifdef ENABLE_LCD
   #include <PNGdec.h>
@@ -131,6 +133,16 @@
 #define SERIAL_COMM_TX_DELAY_MS 5
 
 #define SERIAL_MAX_PICO_BUFFER 102400
+
+/**
+ * Ceiling for the Pico's estimated peak heap need during rc_client load
+ * (payload + parsed triggers + rich presence + strings - see
+ * estimate_pico_load_need_buffer). The Pico has ~191KB of heap; 168KB leaves
+ * room for API transients and fragmentation. Calibrated so SMB3's full set
+ * (need ~157KB, known to fit) passes untouched while FF3's (need ~353KB,
+ * known to PANIC) gets trimmed.
+ */
+#define PICO_LOAD_LIMIT 172032
 /**
  * defines for the fifo used to store achievements to be showed on screen
  */
@@ -353,6 +365,9 @@ size_t serial_buffer_len = 0;
 #define LARGE_BUFFER_SIZE 102400 // 100 KB 
 #define SMALL_BUFFER_SIZE 10240 // 10 KB
 CharBufferStream response;
+// Streaming cleaner for patch downloads - lets the raw response exceed the
+// buffer as long as the cleaned result fits (staging allocated per download)
+PatchStreamFilter patch_filter;
 // HTTP client global to reuse SSL buffers (avoids fragmentation)
 NetworkClientSecure globalSecureClient;
 HTTPClient globalHttpClient;
@@ -537,362 +552,9 @@ bool get_MD5(const char* crc, bool first_bank, char* md5_out, size_t md5_out_siz
   file.close();
   return false;
 }
-// ============================================================================
-// JSON cleaning functions that operate directly on CharBufferStream (in-place)
-// They do not copy memory - they modify the original buffer
-// ============================================================================
 
-// Remove spaces, newlines, and tabs outside of strings (in-place on CharBufferStream)
-void remove_space_new_lines_buffer(CharBufferStream &buf)
-{
-  char* data = buf.data();
-  size_t len = buf.length();
-  bool inside_quotes = false;
-  size_t write_idx = 0;
-
-  for (size_t read_idx = 0; read_idx < len; read_idx++)
-  {
-    char c = data[read_idx];
-
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
-      inside_quotes = !inside_quotes;
-    }
-
-    if (inside_quotes || (c != ' ' && c != '\n' && c != '\r' && c != '\t')) {
-      data[write_idx++] = c;
-    }
-  }
-  buf.setLength(write_idx);
-}
-
-// Remove a complete JSON field (in-place on CharBufferStream)
-void remove_json_field_buffer(CharBufferStream &buf, const char* field_to_remove)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  size_t len = buf.length();
-  size_t field_len = strlen(field_to_remove);
-  
-  bool inside_quotes = false;
-  bool inside_array = false;
-  bool skip_field = false;
-  size_t read_idx = 0, write_idx = 0, skip_init = 0;
-
-  while (read_idx < len)
-  {
-    char c = data[read_idx];
-
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
-      inside_quotes = !inside_quotes;
-    }
-
-    if (c == '[' && skip_field) inside_array = true;
-    if (c == ']' && skip_field) inside_array = false;
-
-    // Detect start of field to remove
-    if (inside_quotes && 
-        read_idx + 1 + field_len + 1 < len &&
-        strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
-        data[read_idx + field_len + 1] == '"')
-    {
-      skip_field = true;
-      skip_init = read_idx;
-    }
-
-    if (!skip_field) {
-      data[write_idx++] = c;
-    }
-
-    // End of field
-    if (skip_field && read_idx + 1 < len && data[read_idx + 1] == '}') {
-      skip_field = false;
-      if (skip_init > 0 && data[skip_init - 1] == ',') {
-        write_idx--;
-      }
-    }
-    else if (skip_field && data[read_idx] == ',' && !inside_array && !inside_quotes) {
-      skip_field = false;
-    }
-
-    read_idx++;
-  }
-  buf.setLength(write_idx);
-}
-
-// Clean the string value of a field - replace with "" (in-place on CharBufferStream)
-void clean_json_field_str_value_buffer(CharBufferStream &buf, const char* field_to_remove)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  size_t len = buf.length();
-  size_t field_len = strlen(field_to_remove);
-  
-  bool inside_quotes = false;
-  bool skip_field = false;
-  bool remove_next_str = false;
-  size_t read_idx = 0, write_idx = 0, skip_init = 0;
-
-  while (read_idx < len)
-  {
-    char c = data[read_idx];
-
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\'))
-    {
-      inside_quotes = !inside_quotes;
-      if (inside_quotes && remove_next_str) {
-        skip_field = true;
-        data[write_idx++] = '"';
-      }
-      if (!inside_quotes && remove_next_str && read_idx > skip_init) {
-        remove_next_str = false;
-        skip_field = false;
-      }
-    }
-
-    if (inside_quotes &&
-        read_idx + 1 + field_len + 1 < len &&
-        strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
-        data[read_idx + field_len + 1] == '"')
-    {
-      remove_next_str = true;
-      skip_init = read_idx + field_len + 2;
-    }
-
-    if (!skip_field) {
-      data[write_idx++] = c;
-    }
-    read_idx++;
-  }
-  buf.setLength(write_idx);
-}
-
-// Clean the array value of a field - replace with [] (in-place on CharBufferStream)
-void clean_json_field_array_value_buffer(CharBufferStream &buf, const char* field_to_remove)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  size_t len = buf.length();
-  size_t field_len = strlen(field_to_remove);
-  
-  bool inside_quotes = false;
-  bool skip_field = false;
-  bool remove_next_array = false;
-  int array_depth = 0;
-  size_t read_idx = 0, write_idx = 0;
-
-  while (read_idx < len)
-  {
-    char c = data[read_idx];
-
-    // Update quote state first (handling escaped quotes)
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
-      inside_quotes = !inside_quotes;
-    }
-
-    // Only process [ and ] when NOT inside quotes
-    if (!inside_quotes) {
-      if (c == '[') {
-        if (remove_next_array) {
-          if (array_depth == 0) {
-            skip_field = true;
-            data[write_idx++] = '[';
-          }
-          array_depth++;
-        }
-      }
-      if (c == ']') {
-        if (remove_next_array) {
-          array_depth--;
-          if (array_depth == 0) {
-            remove_next_array = false;
-            skip_field = false;
-          }
-        }
-      }
-    }
-
-    // Detect the field name to remove
-    if (inside_quotes &&
-        read_idx + 1 + field_len + 1 < len &&
-        strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
-        data[read_idx + field_len + 1] == '"')
-    {
-      remove_next_array = true;
-    }
-
-    if (!skip_field) {
-      data[write_idx++] = c;
-    }
-    read_idx++;
-  }
-  buf.setLength(write_idx);
-}
-
-// Remove achievements with flags 5 (unofficial) - in-place on CharBufferStream
-void remove_achievements_with_flags_5_buffer(CharBufferStream &buf)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  int achvStart = buf.indexOf("\"Achievements\":[");
-  if (achvStart == -1) return;
-
-  int arrayStart = buf.indexOf("[", achvStart);
-  int arrayEnd = buf.indexOf("]", arrayStart);
-  if (arrayStart == -1 || arrayEnd == -1) return;
-
-  int objCount = 0;
-  int pos = arrayStart + 1;
-  
-  while (pos < arrayEnd)
-  {
-    int objStart = buf.indexOf("{", pos);
-    if (objStart == -1 || objStart > arrayEnd) break;
-
-    int objEnd = objStart;
-    int braces = 1;
-    bool inString = false;
-    while (braces > 0 && objEnd < arrayEnd) {
-      objEnd++;
-      char ch = data[objEnd];
-      if (ch == '"' && (objEnd == 0 || data[objEnd - 1] != '\\')) {
-        inString = !inString;
-      }
-      if (!inString) {
-        if (ch == '{') braces++;
-        else if (ch == '}') braces--;
-      }
-    }
-
-    if (objEnd >= arrayEnd) break;
-    objCount++;
-
-    // Search for "Flags":5 inside the object
-    bool hasFlags5 = false;
-    for (int i = objStart; i < objEnd - 8; i++) {
-      if (strncmp(data + i, "\"Flags\":5", 9) == 0) {
-        hasFlags5 = true;
-        break;
-      }
-    }
-
-    if (hasFlags5)
-    {
-      int removeStart = objStart;
-      while (removeStart > arrayStart && (data[removeStart - 1] == ' ' || data[removeStart - 1] == '\n'))
-        removeStart--;
-      if (data[removeStart - 1] == ',')
-        removeStart--;
-      if (objCount == 1 && objEnd + 1 < (int)buf.length() && data[objEnd + 1] == ',')
-        objEnd++;
-
-      buf.removeRange(removeStart, objEnd - removeStart + 1);
-      arrayEnd = buf.indexOf("]", arrayStart);
-      pos = removeStart;
-    }
-    else
-    {
-      pos = objEnd + 1;
-    }
-  }
-}
-
-// Helper: find closing quote handling escaped quotes
-int findClosingQuote(char* data, int start, int limit) {
-  for (int i = start; i < limit; i++) {
-    if (data[i] == '"' && (i == 0 || data[i - 1] != '\\')) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-// Remove achievements with very large MemAddr - in-place on CharBufferStream
-void remove_achievements_with_long_MemAddr_buffer(CharBufferStream &buf, uint32_t maxSize)
-{
-  char* data = buf.data();
-  int achievementsPos = buf.indexOf("\"Achievements\"");
-  if (achievementsPos == -1) return;
-
-  int arrayStart = buf.indexOf("[", achievementsPos);
-  int arrayEnd = buf.indexOf("]", arrayStart);
-  if (arrayStart == -1 || arrayEnd == -1) return;
-
-  int pos = arrayStart + 1;
-  
-  while (pos < arrayEnd)
-  {
-    int objStart = buf.indexOf("{", pos);
-    if (objStart == -1 || objStart >= arrayEnd) break;
-
-    int objEnd = objStart;
-    int braceCount = 1;
-    bool inString = false;
-    while (braceCount > 0 && objEnd + 1 < (int)buf.length()) {
-      objEnd++;
-      char ch = data[objEnd];
-      if (ch == '"' && (objEnd == 0 || data[objEnd - 1] != '\\')) {
-        inString = !inString;
-      }
-      if (!inString) {
-        if (ch == '{') braceCount++;
-        else if (ch == '}') braceCount--;
-      }
-    }
-
-    if (objEnd >= arrayEnd) break;
-
-    // Search for "MemAddr"
-    int memAddrPos = -1;
-    for (int i = objStart; i < objEnd - 8; i++) {
-      if (strncmp(data + i, "\"MemAddr\"", 9) == 0) {
-        memAddrPos = i;
-        break;
-      }
-    }
-
-    if (memAddrPos == -1) {
-      pos = objEnd + 1;
-      continue;
-    }
-
-    int valueStart = buf.indexOf("\"", memAddrPos + 9);
-    if (valueStart == -1 || valueStart > objEnd) {
-      pos = objEnd + 1;
-      continue;
-    }
-
-    int valueEnd = findClosingQuote(data, valueStart + 1, objEnd);
-    if (valueEnd == -1 || valueEnd > objEnd) {
-      pos = objEnd + 1;
-      continue;
-    }
-
-    int memAddrLength = valueEnd - valueStart - 1;
-    
-    if (memAddrLength > (int)maxSize)
-    {
-      int removeStart = objStart;
-      int removeEnd = objEnd + 1;
-
-      if (removeEnd < (int)buf.length() && data[removeEnd] == ',')
-        removeEnd++;
-      else if (removeStart > arrayStart + 1 && data[removeStart - 1] == ',')
-        removeStart--;
-
-      buf.removeRange(removeStart, removeEnd - removeStart);
-      arrayEnd -= (removeEnd - removeStart);
-      pos = removeStart;
-    }
-    else
-    {
-      pos = objEnd + 1;
-    }
-  }
-}
+// JSON cleaning functions (remove_json_field_buffer & friends) live in JsonCleaner.h,
+// shared with PatchStreamFilter and desktop unit tests.
 
 
 void print_memory_stats(const char* label = "") {
@@ -1549,7 +1211,7 @@ String try_login_RA(String ra_user, String ra_pass)
   
   // print_memory_stats("BEFORE HTTP REQUEST (login)");
   
-  int ret = perform_http_request_buffer(login_url, GET, "", 0, response, true, 3, 5000, 500);
+  int ret = perform_http_request_buffer(login_url, GET, "", 0, response, true, 3, 5000, 500, nullptr);
   
   // print_memory_stats("AFTER HTTP REQUEST (login)");
   
@@ -2001,6 +1663,8 @@ const char* http_request_result_to_cstr(int code)
 }
 
 // perform an HTTP request writing directly to CharBufferStream with retries and exponential backoff
+// When filter is given, response bytes are cleaned on the fly (streaming) before
+// reaching resp, so the raw response may be larger than resp's capacity.
 int perform_http_request_buffer(
     const char* url,
     HttpRequestMethod method,
@@ -2010,7 +1674,8 @@ int perform_http_request_buffer(
     bool isIdempotent,
     int maxRetries,
     int timeoutMs,
-    int retryDelayMs)
+    int retryDelayMs,
+    PatchStreamFilter* filter)
 {
   int attempt = 0;
   int wifiRetries = 3;
@@ -2050,7 +1715,7 @@ int perform_http_request_buffer(
       continue;
     }
     
-    const char user_agent[] = "NES_RA_ADAPTER/1.2 rcheevos/11.6";
+    const char user_agent[] = "NES_RA_ADAPTER/1.4 rcheevos/11.6";
     globalHttpClient.setUserAgent(user_agent);
 
     Serial.println(F("Sending request..."));
@@ -2075,14 +1740,18 @@ int perform_http_request_buffer(
         
         Serial.print(F("Content-Length: ")); Serial.print(contentLength); Serial.print(F(" (chunked: ")); Serial.print(isChunked); Serial.println(F(")"));
         
-        // Check if it fits in the buffer (if Content-Length is known)
-        if (contentLength > 0 && contentLength > (int)resp.capacity()) {
-          Serial.print(F("Response too big: ")); Serial.print(contentLength); Serial.print(F(" > ")); Serial.println(resp.capacity());
+        // Check if it fits in the buffer (if Content-Length is known).
+        // With a stream filter the raw size may exceed the buffer (it is cleaned
+        // on the fly); keep only a sanity cap against pathological responses.
+        int rawLimit = filter ? 409600 : (int)resp.capacity();
+        if (contentLength > 0 && contentLength > rawLimit) {
+          Serial.print(F("Response too big: ")); Serial.print(contentLength); Serial.print(F(" > ")); Serial.println(rawLimit);
           globalHttpClient.end();
           return HTTP_ERR_REPONSE_TOO_BIG;
         }
-        
+
         resp.clear();
+        if (filter) filter->restart(); // fresh state for this attempt
         // Smaller read buffer to reduce stack usage (256 is enough for chunked)
         uint8_t buff[256];
         size_t totalRead = 0;
@@ -2178,7 +1847,13 @@ int perform_http_request_buffer(
           if (toRead == 0) continue;
           
           size_t readBytes = stream->readBytes(buff, toRead);
-          size_t written = resp.write(buff, readBytes);
+          size_t written;
+          if (filter) {
+            filter->write(buff, readBytes); // cleans in-stream, writes survivors to resp
+            written = readBytes;
+          } else {
+            written = resp.write(buff, readBytes);
+          }
           totalRead += written;
           
           if (isChunked) {
@@ -2202,7 +1877,8 @@ int perform_http_request_buffer(
             }
           }
           
-          if (written < readBytes) {
+          bool bufferFull = filter ? filter->overflowed() : (written < readBytes);
+          if (bufferFull) {
             Serial.println(F("Buffer full during HTTP read"));
             globalHttpClient.end();
             return HTTP_ERR_REPONSE_TOO_BIG;
@@ -2216,6 +1892,15 @@ int perform_http_request_buffer(
           yield();
         }
         
+        if (filter) {
+          filter->finish(); // flush any partial staged data
+          if (filter->overflowed()) {
+            Serial.println(F("Filtered response exceeds buffer"));
+            globalHttpClient.end();
+            return HTTP_ERR_REPONSE_TOO_BIG;
+          }
+        }
+
         Serial.print(F("Total read: ")); Serial.print(totalRead); Serial.println(F(" bytes"));
         globalHttpClient.end();
         
@@ -2400,24 +2085,40 @@ void handle_req_command(const char* cmd, size_t cmd_len) {
   }
   
   // Prepare memory for large download
+  bool use_stream_filter = false;
   if (is_patch_request) {
     Serial.println(F("Preparing memory for large download..."));
     // Disable WiFi power save during large download (more stable)
     esp_wifi_set_ps(WIFI_PS_NONE);
+    // Clean the JSON while it downloads: the raw response may be bigger than
+    // the buffer as long as the cleaned result fits (e.g. FF3: 129KB -> ~83KB)
+    use_stream_filter = patch_filter.begin(&response);
+    if (!use_stream_filter) {
+      Serial.println(F("Patch filter staging alloc failed - downloading raw"));
+    }
     // Small delay to allow the system to free resources
     delay(50);
     yield();
   }
-  
+
   response.clear();
   print_memory_stats("BEFORE HTTP REQUEST (REQ handler)");
-  
+
   // Longer timeout for patch requests (30s) as the response can be large (30KB+)
   int request_timeout = is_patch_request ? 30000 : 5000;
-  
+
   // Execute HTTP request using char* version directly
-  int ret = perform_http_request_buffer(final_url, POST, data, data_len, response, true, 3, request_timeout, 500);
-  
+  int ret = perform_http_request_buffer(final_url, POST, data, data_len, response, true, 3, request_timeout, 500,
+                                        use_stream_filter ? &patch_filter : nullptr);
+
+  if (use_stream_filter) {
+    Serial.print(F("Stream filter: raw=")); Serial.print(patch_filter.rawBytes());
+    Serial.print(F(" kept=")); Serial.print(patch_filter.keptCount());
+    Serial.print(F(" dropped=")); Serial.print(patch_filter.droppedCount());
+    Serial.print(F(" filtered=")); Serial.println(response.length());
+    patch_filter.end(); // release the 10KB staging buffer
+  }
+
   if (ret < 0) {
     Serial.print(F("ERROR ON RESPONSE: "));
     Serial.println(http_request_result_to_cstr(ret));
@@ -2443,6 +2144,21 @@ void handle_req_command(const char* cmd, size_t cmd_len) {
       clean_json_field_array_value_buffer(response, "Leaderboards");      
       remove_achievements_with_flags_5_buffer(response);
       remove_achievements_with_long_MemAddr_buffer(response, 8192); // remove achievements with MemAddr > 8KB
+
+      // Keep the Pico's peak load memory within its heap: big sets (e.g. FF3)
+      // OOM the RP2040 during rc_client load even though the JSON fits. The
+      // trim drops rich presence first, then the most expensive achievements
+      // (never the progression/win_condition ones needed to beat the game).
+      uint32_t load_need = estimate_pico_load_need_buffer(response);
+      if (load_need > PICO_LOAD_LIMIT) {
+        Serial.print(F("Pico load limit exceeded: need=")); Serial.print(load_need);
+        Serial.print(F(" limit=")); Serial.println(PICO_LOAD_LIMIT);
+        int dropped_heavy = trim_achievements_to_pico_budget_buffer(response, PICO_LOAD_LIMIT);
+        Serial.print(F("Trimmed ")); Serial.print(dropped_heavy);
+        Serial.print(F(" heavy achievements; need now: "));
+        Serial.println(estimate_pico_load_need_buffer(response));
+      }
+
       if (response.length() > SERIAL_MAX_PICO_BUFFER) {
         remove_json_field_buffer(response, "RichPresencePatch");
       }
