@@ -193,7 +193,7 @@ The adapter uses two microcontrollers working together:
 
 Everyone is welcome to contribute!
 - Submit improvements and pull requests via GitHub.
-- Join our Discord channel: [https://discord.gg/57v2GPHMx6](https://discord.gg/57v2GPHMx6)
+- Join our Discord channel: [https://discord.gg/6eYGq7NNfF](https://discord.gg/6eYGq7NNfF)
 - Support us by [buying a coffee](https://buymeacoffee.com/nes.ra.adapter) to help with hardware prototype costs.
 
 ---
