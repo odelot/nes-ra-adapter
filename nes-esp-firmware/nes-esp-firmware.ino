@@ -188,6 +188,14 @@
 #define NOTE_C5  523
 #define NOTE_GS4 415
 #define NOTE_AS4 466
+#define NOTE_CS6 1109
+#define NOTE_DS6 1245
+#define NOTE_F6  1397
+#define NOTE_FS6 1480
+#define NOTE_GS6 1661
+#define NOTE_A6  1760
+#define NOTE_AS6 1865
+#define NOTE_B6  1976
 
 
 #define SOUND_PIN 10
@@ -305,6 +313,7 @@ bool fifo_is_full(achievements_FIFO_t *fifo);
 bool fifo_enqueue(achievements_FIFO_t *fifo, achievements_t value);
 bool fifo_dequeue(achievements_FIFO_t *fifo, achievements_t *value);
 void show_achievement(achievements_t achievement);
+void redraw_achievement_screen(const achievements_t &achievement, uint16_t bgColor);
 
 
 // global variables for LED control
@@ -381,6 +390,20 @@ String game_image;
 String game_id;
 String game_session;
 bool go_back_to_title_screen = false;
+
+// set by GAME_BEATEN, consumed by the main loop once the achievement that
+// completed the game is on screen
+bool pending_game_beaten = false;
+
+// last achievement drawn by show_achievement - the BEATEN celebration runs
+// after it returns and needs it to flash that same screen
+achievements_t last_shown_achievement;
+bool has_last_shown_achievement = false;
+
+// the "** BEATEN! **" banner is covering the splash footer and must be
+// repainted when we go back to the title screen (unlike MASTERED, the player
+// keeps playing after beating the game)
+bool beaten_banner_visible = false;
 bool already_showed_title_screen = false;
 long go_back_to_title_screen_timestamp;
 unsigned long last_wifi_status_update = 0;
@@ -802,6 +825,36 @@ void play_victory_sound()
 
 }
 
+void play_beat_sound ()
+{
+    const int NOTE_GAP = 20;
+
+    const int SHORT = 150;
+    const int REST  = 150;
+    const int LONG  = 2550;
+
+    tone(SOUND_PIN, NOTE_DS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_DS6); delay(SHORT); noTone(SOUND_PIN); delay(REST);
+
+    tone(SOUND_PIN, NOTE_F6);  delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_F6);  delay(SHORT); noTone(SOUND_PIN); delay(REST);
+
+    tone(SOUND_PIN, NOTE_FS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_FS6); delay(SHORT); noTone(SOUND_PIN); delay(REST);
+
+    tone(SOUND_PIN, NOTE_GS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_FS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_GS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_AS6); delay(LONG);
+    noTone(SOUND_PIN);
+}
+
 // play a sound to indicate an error
 void play_error_sound()
 {
@@ -994,6 +1047,41 @@ void show_title_screen()
 #endif
 }
 
+/**
+ * Redraw the achievement screen over a given background color.
+ *
+ * Shared by the MASTERED celebration (inside show_achievement) and the BEATEN
+ * one (which runs later, from the main loop) so both flash the whole panel the
+ * same way. The image is re-decoded from the file the achievement screen
+ * already downloaded, so this works after show_achievement has returned.
+ */
+void redraw_achievement_screen(const achievements_t &achievement, uint16_t bgColor)
+{
+#ifdef ENABLE_LCD
+  char file_name[64];
+  sprintf(file_name, "/achievement_%d.png", achievement.id);
+
+  tft.fillRoundRect(20, 80, 200, 120, 12, bgColor);
+  print_line_bgcolor("New Achievement Unlocked!", 0, 0, bgColor);
+  print_line_bgcolor("", 1, -1, bgColor);
+  print_line_bgcolor("", 2, -1, bgColor);
+  print_line_bgcolor("", 3, -1, bgColor);
+  print_line_bgcolor(achievement.title.c_str(), 4, -1, bgColor);
+
+  // Redraw the achievement image
+  x_pos = 50;
+  y_pos = 110;
+  int16_t rc = png->open(file_name, png_open, png_close, png_read, png_seek, png_draw);
+  if (rc == PNG_SUCCESS)
+  {
+    tft.startWrite();
+    png->decode(NULL, 0);
+    tft.endWrite();
+    png->close();
+  }
+#endif
+}
+
 // show the achievement screen
 void show_achievement(achievements_t achievement)
 {
@@ -1018,36 +1106,24 @@ void show_achievement(achievements_t achievement)
   char file_name[64];
   sprintf(file_name, "/achievement_%d.png", achievement.id);
   try_download_file(achievement.url, file_name);
-  
+
   // Helper lambda to redraw the achievement screen with a specific background color
   auto redrawAchievementScreen = [&](uint16_t bgColor) {
-    tft.fillRoundRect(20, 80, 200, 120, 12, bgColor);
-    print_line_bgcolor("New Achievement Unlocked!", 0, 0, bgColor);
-    print_line_bgcolor("", 1, -1, bgColor);
-    print_line_bgcolor("", 2, -1, bgColor);
-    print_line_bgcolor("", 3, -1, bgColor);
-    print_line_bgcolor(achievement.title.c_str(), 4, -1, bgColor);
-    
-    // Redraw the achievement image
-    x_pos = 50;
-    y_pos = 110;
-    int16_t rc = png->open(file_name, png_open, png_close, png_read, png_seek, png_draw);
-    if (rc == PNG_SUCCESS)
-    {
-      tft.startWrite();
-      png->decode(NULL, 0);
-      tft.endWrite();
-      png->close();
-    }
+    redraw_achievement_screen(achievement, bgColor);
   };
-  
+
+  // Keep the (already truncated) achievement around: the BEATEN celebration
+  // runs later, from the main loop, and needs it to flash this same screen
+  last_shown_achievement = achievement;
+  has_last_shown_achievement = true;
+
   // Initial draw with black background
   redrawAchievementScreen(TFT_BLACK);
   Serial.println(achievement.title);
   
   // Check if game was mastered (all achievements unlocked)
   //if (unlocked_achievements == 1) //test
-  if (unlocked_achievements > 0 && unlocked_achievements == total_achievements)
+  if (unlocked_achievements > 1 && unlocked_achievements == total_achievements)
   {
     // MASTERED! Celebration mode
     Serial.println(F("GAME MASTERED! Playing victory fanfare"));
@@ -2404,6 +2480,9 @@ void handle_game_info_command(const char* cmd, size_t cmd_len) {
   // Reset achievement counters for new game
   total_achievements = 0;
   unlocked_achievements = 0;
+  pending_game_beaten = false;
+  has_last_shown_achievement = false;
+  beaten_banner_visible = false;
   
   // Advance
   const char* remaining = cmd + pos1 + 1;
@@ -2515,6 +2594,114 @@ void handle_ach_summary_command(const char* cmd, size_t cmd_len) {
   Serial.print(unlocked_achievements);
   Serial.print(F("/"));
   Serial.println(total_achievements);
+}
+
+/**
+ * Handler for GAME_BEATEN command - the Pico detected that every progression
+ * achievement (plus a win condition, when the set defines one) is unlocked.
+ *
+ * The command arrives right behind the A= of the unlock that completed the
+ * game, but that achievement is still sitting in the display FIFO at this
+ * point (it is only drawn when the serial line goes quiet). So this just arms
+ * the celebration and the main loop runs it once the screen is actually
+ * showing the achievement that earned it.
+ */
+void handle_game_beaten_command() {
+  Serial.println(F("GAME BEATEN!"));
+
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+  send_ws_data("BEAT=1");
+#endif
+
+  pending_game_beaten = true;
+}
+
+// Run the beaten celebration on top of the achievement screen already drawn
+void celebrate_game_beaten() {
+  pending_game_beaten = false;
+
+  // A mastered game already ran the bigger celebration in show_achievement -
+  // do not stack a second fanfare on top of it
+  if (total_achievements > 0 && unlocked_achievements >= total_achievements) {
+    Serial.println(F("Already mastered - skipping beat celebration"));
+    return;
+  }
+
+  Serial.println(F("Playing beat fanfare"));
+
+#ifdef ENABLE_LCD
+  if (!has_last_shown_achievement) {
+    // nothing on screen to flash (should not happen - the unlock that beat the
+    // game is always shown first), so just play the fanfare
+    play_beat_sound();
+    return;
+  }
+
+  setCpuFrequencyMhz(160);
+
+  // Show BEATEN text in larger font over the footer area (same slot MASTERED
+  // uses). The background must be TFT_YELLOW: drawString only fills the glyph
+  // box, and the strip around it is the screen's yellow - any other color
+  // leaves a colored rectangle floating in it.
+  tft.setTextColor(TFT_BLACK, TFT_YELLOW);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("** BEATEN! **", 120, 225, 4);
+  tft.setTextDatum(TL_DATUM);  // Reset datum
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  beaten_banner_visible = true;
+
+  uint16_t colorBlack = TFT_BLACK;
+  uint16_t colorBlue = tft.color565(0, 60, 120);
+  uint16_t colors[] = { colorBlue, colorBlack };
+  int colorIndex = 0;
+
+  // Flash background a few times before music
+  for (int i = 0; i < 6; i++)
+  {
+    redraw_achievement_screen(last_shown_achievement, colors[colorIndex]);
+    colorIndex = (colorIndex + 1) % 2;
+    delay(150);
+  }
+
+  play_beat_sound();
+
+  // Flash more after music
+  for (int i = 0; i < 6; i++)
+  {
+    redraw_achievement_screen(last_shown_achievement, colors[colorIndex]);
+    colorIndex = (colorIndex + 1) % 2;
+    delay(150);
+  }
+
+  // Restore black background
+  redraw_achievement_screen(last_shown_achievement, TFT_BLACK);
+
+  // the celebration ate several seconds of the 15s window - restart it so the
+  // achievement and the banner are actually readable before the title returns
+  go_back_to_title_screen = true;
+  go_back_to_title_screen_timestamp = millis();
+  setCpuFrequencyMhz(80);
+#endif
+}
+
+/**
+ * Repaint the strip the "** BEATEN! **" banner covered, restoring the splash
+ * footer underneath it. Called when we go back to the title screen: beating a
+ * game is not the end of the session, so the UI has to return to its normal
+ * state (MASTERED deliberately keeps its banner - there is nothing left to do).
+ */
+void clear_beaten_banner()
+{
+  beaten_banner_visible = false;
+#ifdef ENABLE_LCD
+  tft.fillRect(0, 206, tft.width(), 34, TFT_YELLOW);
+  tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextSize(1);
+  tft.setCursor(75, 220, 2);
+  tft.println("by Odelot & GH");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+#endif
 }
 
 /**
@@ -2895,8 +3082,15 @@ void loop()
     go_back_to_title_screen = false;
     if (fifo_is_empty(&achievements_fifo))
     {
-      
+
       show_title_screen();
+      // show_title_screen does not repaint below the game image, so the BEATEN
+      // banner would survive into the title screen - drop it and put the
+      // original footer back
+      if (beaten_banner_visible)
+      {
+        clear_beaten_banner();
+      }
     }
   }
 
@@ -2947,6 +3141,12 @@ void loop()
     fifo_dequeue(&achievements_fifo, &achievement);
     show_achievement(achievement);
   }
+  // celebrate the beaten game only after every pending achievement has been
+  // shown, so the banner lands on top of the unlock that earned it
+  else if (pending_game_beaten && fifo_is_empty(&achievements_fifo) && Serial0.available() == 0)
+  {
+    celebrate_game_beaten();
+  }
 
   // handle the serial communication with the pico - usando buffer fixo
   while (Serial0.available() > 0)
@@ -2991,6 +3191,9 @@ void loop()
       }
       else if (starts_with(serial_buffer, cmd_len, "ACH_SUMMARY=")) {
         handle_ach_summary_command(serial_buffer + 12, cmd_len - 12);
+      }
+      else if (starts_with(serial_buffer, cmd_len, "GAME_BEATEN")) {
+        handle_game_beaten_command();
       }
       else if (starts_with(serial_buffer, cmd_len, "NES_RESETED")) {
         handle_nes_reset_command();

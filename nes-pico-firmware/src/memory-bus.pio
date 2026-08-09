@@ -83,6 +83,38 @@ still_high:
     wait 0 pin 0         ; sleep until rendering resumes
 .wrap
 
+; ---------------------------------------------------------------------------
+; m2Frame: frame clock derived from the console's own M2 (CPU) clock.
+;
+; The NES divides M2 and the PPU dot clock from the same crystal, so a video
+; frame is an exact number of M2 cycles: NTSC 89342 dots / 3 dots-per-cycle =
+; 29780.667, PAL 106392 / 3.2 = 33247.5. Counting M2 therefore reproduces the
+; console's frame rate with zero drift, unlike the Pico-side 16667us timer
+; fallback (27.8us/frame off the real 16639.2us NTSC frame - one whole frame
+; lost every ~10s of NMI-less play).
+;
+; M2 is also the only frame-related signal that NEVER stops: it keeps ticking
+; with rendering disabled, with NMI disabled and throughout DMA. That is what
+; makes this a replacement for the timer fallback rather than another partial
+; detector.
+;
+; Y is reloaded from the TX fifo after every push, so software can alternate
+; the reload value and track the fractional cycles-per-frame exactly. The loop
+; counts (reload + 1) M2 cycles - software passes (cycles - 1).
+;
+; in_base must point at the M2 GPIO ("wait n pin 0" watches it).
+; ---------------------------------------------------------------------------
+.program m2Frame
+
+.wrap_target
+    out y, 32            ; autopull: length of the next frame, in M2 cycles
+count:
+    wait 0 pin 0         ; M2 low
+    wait 1 pin 0         ; M2 rising edge - exactly one CPU cycle elapsed
+    jmp y--, count
+    push noblock         ; frame boundary
+.wrap
+
 % c-sdk {
 
 // GPIO assignments duplicated from main.c (kept in sync by hand)
@@ -144,6 +176,21 @@ static inline void ppuQuiet_program_init(PIO pio, uint sm, uint offset, float di
     pio_sm_put_blocking(pio, sm, quiet_laps);
     pio_sm_exec(pio, sm, pio_encode_pull(false, true));
     pio_sm_exec(pio, sm, pio_encode_mov(pio_y, pio_osr));
+}
+
+// The frame length is pulled from the TX fifo at every frame boundary, so no
+// value is preloaded here - the caller primes the fifo before enabling the SM.
+static inline void m2Frame_program_init(PIO pio, uint sm, uint offset, float div, uint m2_gpio)
+{
+    pio_sm_config c = m2Frame_program_get_default_config(offset);
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_set_consecutive_pindirs(pio, sm, m2_gpio, 1, false);
+
+    sm_config_set_in_pins(&c, m2_gpio);          // "wait n pin 0" watches M2
+    sm_config_set_out_shift(&c, true, true, 32); // shift right, autopull at 32
+
+    pio_sm_init(pio, sm, offset, &c);
 }
 
 %}

@@ -14,10 +14,16 @@
  * post-download cleanup in the sketch still runs afterwards as a safety net and
  * for the global size fallbacks.
  *
- * An achievement object that outgrows the staging buffer can only be one with a
- * huge MemAddr (all other fields are small), so overflowing the staging buffer
- * simply switches to skip mode and drops the object - same outcome as the
- * MemAddr rule.
+ * Progression and win_condition achievements are exempt from the MemAddr rule:
+ * dropping one makes the game impossible to beat and breaks the adapter's
+ * beaten detection, so they are kept no matter the cost (same protection the
+ * post-download budget trim applies in is_protected_achievement).
+ *
+ * An achievement object that outgrows the staging buffer switches to skip mode
+ * and is dropped. Since only a huge MemAddr can get an object there (every
+ * other field is small), that puts a hard ceiling on what the exemption above
+ * can rescue: a protected achievement survives while its object still fits in
+ * PATCH_FILTER_STAGING_SIZE, not one byte more.
  *
  * Part of NES RA Adapter - ESP32 Firmware
  **********************************************************************************/
@@ -231,6 +237,16 @@ private:
     }
   }
 
+  // Progression and win_condition achievements decide whether the game can be
+  // beaten (and drive the adapter's beaten detection), so they are never
+  // dropped for being expensive - same rule the post-download budget trim uses
+  // in is_protected_achievement(). Whitespace outside strings is already gone
+  // by the time an object is staged, so the match needs no tolerance for it.
+  bool isProtectedObject() const {
+    return _staging.indexOf("\"Type\":\"progression\"") != -1 ||
+           _staging.indexOf("\"Type\":\"win_condition\"") != -1;
+  }
+
   // Clean one complete staged achievement object and emit it (or drop it)
   void processObject() {
     remove_json_field_buffer(_staging, "BadgeLockedURL");
@@ -242,7 +258,7 @@ private:
     // Unofficial achievement (same match as remove_achievements_with_flags_5_buffer)
     bool drop = (_staging.indexOf("\"Flags\":5") != -1);
 
-    if (!drop) {
+    if (!drop && !isProtectedObject()) {
       int memAddrPos = _staging.indexOf("\"MemAddr\":\"");
       if (memAddrPos != -1) {
         int valueStart = memAddrPos + 11; // strlen("\"MemAddr\":\"")

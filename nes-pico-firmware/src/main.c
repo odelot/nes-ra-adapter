@@ -98,6 +98,11 @@
 #define BUS_SM_RESET 2 // RESET vector fetch watcher ($FFFC/$FFFD)
 #define BUS_SM_PPU 3   // PPU /RD quiescence watcher (ENABLE_PPU_RD_VBLANK)
 
+// The M2 frame clock lives on pio1 so it never competes with BUS_SM_PPU for
+// the last state machine of pio0 (both can be enabled at the same time).
+#define M2_PIO pio1
+#define M2_SM 0
+
 #define UART_ID uart0
 #define BAUD_RATE 115200
 
@@ -141,6 +146,42 @@
 #else
 #define FRAME_TIME_US 20000 // 1000000 / 50 = 20000
 #endif
+
+/**
+ * M2 frame clock: exact frame pacing derived from the console's own clock.
+ *
+ * M2 (the CPU clock) and the PPU dot clock come from the same crystal, so a
+ * video frame is an exact number of M2 cycles - expressed here as a fraction
+ * because it is not an integer:
+ *   NTSC: 262 scanlines * 341 dots = 89342 dots / 3 dots-per-cycle = 29780.667
+ *   PAL:  312 scanlines * 341 dots = 106392 dots / 3.2             = 33247.5
+ * Software walks the fraction with a Bresenham accumulator (see
+ * m2_next_frame_cycles), so the long-run rate has NO drift at all.
+ *
+ * This replaces the free-running FRAME_TIME_US timer as the fallback for
+ * stretches where the NMI vector is silent. The timer runs off the Pico's
+ * crystal at 16667us against a real NTSC frame of 16639.2us: 27.8us of error
+ * per frame, i.e. a whole frame gained every ~600 frames (~10s). M2 is the
+ * console's own clock and never stops - not with rendering off, not with NMI
+ * disabled, not during DMA - so it covers every case the other detectors miss.
+ */
+#ifdef REFRESH_RATE_60_HZ
+#define M2_CYCLES_NUM 89342 // NTSC PPU dots per frame
+#define M2_CYCLES_DEN 3     // NTSC PPU dots per CPU cycle
+#else
+#define M2_CYCLES_NUM 66495 // PAL: 106392 dots / 3.2 == 66495 / 2
+#define M2_CYCLES_DEN 2
+#endif
+
+/**
+ * While defined, the M2 frame clock is measured (VBM2 log line) but never
+ * drives pacing - frames stay on the NMI path with the old timer fallback.
+ * Use it to validate the clock on real hardware before trusting it: with the
+ * cycles-per-frame fraction correct, the reported M2 period must match the
+ * NMI period to within a few us and stay there indefinitely. Comment this out
+ * to let the M2 clock replace the timer fallback.
+ */
+// #define M2_FRAME_CLOCK_SHADOW_ONLY
 
 /**
  * enable internal web app support
@@ -276,6 +317,7 @@ static const uint32_t crc_32_tab[] = {
 
 uint PIO_offset_write;
 uint PIO_offset_vector;
+uint PIO_offset_m2;
 #ifdef ENABLE_PPU_RD_VBLANK
 uint PIO_offset_ppu;
 #endif
@@ -346,6 +388,20 @@ volatile uint32_t vbstat_stage_overflows = 0; // staging overflows (must stay 0)
 volatile uint32_t vbstat_resets = 0;          // RESET vector detections
 static uint32_t vbstat_timer_frames = 0;      // core 0 only: timer-fallback frames
 
+/*
+ * M2 frame clock stats (VBM2 log line). The period is the validation that
+ * matters: it must match the NMI period (~16639us NTSC / ~19997us PAL) with a
+ * min/max spread of a few us, and it must NOT walk over time - both clocks
+ * come from the console crystal, so any drift means the cycles-per-frame
+ * fraction is wrong. "driven" counts the frames the M2 clock actually paced.
+ */
+volatile uint32_t vbstat_m2_pushes = 0;       // raw frame-boundary pushes
+volatile uint32_t vbstat_m2_period_sum_us = 0;
+volatile uint32_t vbstat_m2_period_min_us = 0xFFFFFFFF; // windowed
+volatile uint32_t vbstat_m2_period_max_us = 0;          // windowed
+volatile uint32_t vbstat_m2_driven = 0;       // frames signaled by the M2 clock
+volatile uint32_t vbstat_m2_anchors = 0;      // re-anchors (NMI resumed after a gap)
+
 #ifdef ENABLE_PPU_RD_VBLANK
 /*
  * PPU /RD detector comparison stats (VBPPU log line). Lets the PPU-based
@@ -404,6 +460,12 @@ uint8_t request_id = 0; // last request id used - used to identify the response 
  */
 
 #define FIFO_SIZE 15
+
+/*
+ * Synthetic event, queued alongside the rcheevos ones (which stop at 18) so a
+ * beaten game reaches the ESP32 in order behind the unlock that caused it.
+ */
+#define EVENT_GAME_BEATEN 200
 
 typedef struct
 {
@@ -558,6 +620,59 @@ void set_GPIO_dominate_bus()
  * PIO functions
  */
 
+/*
+ * M2 frame clock helpers.
+ *
+ * The frame length alternates between floor and ceil of the exact fraction so
+ * the long-run average is exact: NTSC walks 29780, 29781, 29781 (sum 89342 =
+ * 3 frames), PAL walks 33247, 33248 (sum 66495 = 2 frames). The PIO loop
+ * counts (reload + 1) M2 cycles, hence the -1 when feeding the TX fifo.
+ */
+static uint32_t m2_accum = 0;
+
+static inline uint32_t m2_next_frame_cycles()
+{
+    uint32_t cycles = M2_CYCLES_NUM / M2_CYCLES_DEN;
+    m2_accum += M2_CYCLES_NUM % M2_CYCLES_DEN;
+    if (m2_accum >= M2_CYCLES_DEN)
+    {
+        m2_accum -= M2_CYCLES_DEN;
+        cycles += 1;
+    }
+    return cycles;
+}
+
+// queue one frame length. The TX fifo is kept primed several frames deep so
+// the state machine never stalls waiting on core 1 (a stall would silently
+// drop M2 cycles, which is the one thing that could make this clock drift).
+static inline void __not_in_flash_func(m2_feed_reload)()
+{
+    if (!pio_sm_is_tx_fifo_full(M2_PIO, M2_SM))
+        pio_sm_put(M2_PIO, M2_SM, m2_next_frame_cycles() - 1);
+}
+
+/*
+ * Re-anchor the M2 frame clock so its next boundary lands exactly one frame
+ * from now. Called on the NMI that resumes after a gap (and once at startup):
+ * from then on both clocks run off the same crystal at the same rate, so they
+ * stay in phase indefinitely and the handoff to the M2 clock - when the NMI
+ * goes silent again - neither drops nor duplicates a frame.
+ */
+static void __not_in_flash_func(m2_frame_anchor)()
+{
+    pio_sm_set_enabled(M2_PIO, M2_SM, false);
+    pio_sm_clear_fifos(M2_PIO, M2_SM);
+    pio_sm_restart(M2_PIO, M2_SM);
+    pio_sm_exec(M2_PIO, M2_SM, pio_encode_jmp(PIO_offset_m2));
+    m2_accum = 0;
+    for (int i = 0; i < 4; i += 1) // fill the TX fifo: 4 frames of slack
+        m2_feed_reload();
+    pio_sm_set_enabled(M2_PIO, M2_SM, true);
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+    vbstat_m2_anchors += 1;
+#endif
+}
+
 // initialize the PIO programs: write sniffer + NMI/RESET vector watchers
 void setup_PIO()
 {
@@ -576,6 +691,8 @@ void setup_PIO()
     memoryBusWrite_program_init(BUS_PIO, BUS_SM_WRITE, PIO_offset_write, pio_div);
     vectorWatch_program_init(BUS_PIO, BUS_SM_NMI, PIO_offset_vector, pio_div, VECTOR_WATCH_NMI_TARGET);
     vectorWatch_program_init(BUS_PIO, BUS_SM_RESET, PIO_offset_vector, pio_div, VECTOR_WATCH_RESET_TARGET);
+    PIO_offset_m2 = pio_add_program(M2_PIO, &m2Frame_program);
+    m2Frame_program_init(M2_PIO, M2_SM, PIO_offset_m2, pio_div, NES_M2);
 #ifdef ENABLE_PPU_RD_VBLANK
     PIO_offset_ppu = pio_add_program(BUS_PIO, &ppuQuiet_program);
     gpio_init(PPU_RD_PIN);
@@ -598,6 +715,10 @@ void stop_PIO()
     pio_sm_restart(BUS_PIO, BUS_SM_RESET);
     pio_remove_program(BUS_PIO, &memoryBusWrite_program, PIO_offset_write);
     pio_remove_program(BUS_PIO, &vectorWatch_program, PIO_offset_vector);
+    pio_sm_set_enabled(M2_PIO, M2_SM, false);
+    pio_sm_clear_fifos(M2_PIO, M2_SM);
+    pio_sm_restart(M2_PIO, M2_SM);
+    pio_remove_program(M2_PIO, &m2Frame_program, PIO_offset_m2);
 #ifdef ENABLE_PPU_RD_VBLANK
     pio_sm_set_enabled(BUS_PIO, BUS_SM_PPU, false);
     pio_sm_clear_fifos(BUS_PIO, BUS_SM_PPU);
@@ -629,6 +750,9 @@ static uint32_t last_frame_signal_us = 0;
 // vblank re-trigger the quiet detector, so events are deduplicated by time)
 static uint32_t last_ppu_event_us = 0;
 #endif
+
+// timestamp of the last M2 frame-clock boundary (used for the period stats)
+static uint32_t last_m2_event_us = 0;
 
 // apply one captured write-cycle word to the RAM/SRAM mirrors
 static inline void __not_in_flash_func(apply_bus_write)(uint32_t raw)
@@ -722,6 +846,7 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
 #ifdef ENABLE_PPU_RD_VBLANK
     pio_sm_set_enabled(BUS_PIO, BUS_SM_PPU, true);
 #endif
+    m2_frame_anchor(); // primes the TX fifo and starts the M2 frame clock
 
     uint32_t last_reset_push_us = 0;
     bool frame_signal = false;
@@ -832,6 +957,54 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
         }
 #endif
 
+        // M2 frame clock: an exact frame worth of CPU cycles has elapsed.
+        // Every push must be matched by a fresh reload so the state machine
+        // never runs the fifo dry.
+        if (!pio_sm_is_rx_fifo_empty(M2_PIO, M2_SM))
+        {
+            do
+            {
+                (void)pio_sm_get(M2_PIO, M2_SM);
+                m2_feed_reload();
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                vbstat_m2_pushes += 1;
+#endif
+            } while (!pio_sm_is_rx_fifo_empty(M2_PIO, M2_SM));
+
+            uint32_t now_m2 = time_us_32();
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+            if (last_m2_event_us != 0)
+            {
+                uint32_t period = now_m2 - last_m2_event_us;
+                vbstat_m2_period_sum_us += period;
+                if (period < vbstat_m2_period_min_us)
+                    vbstat_m2_period_min_us = period;
+                if (period > vbstat_m2_period_max_us)
+                    vbstat_m2_period_max_us = period;
+            }
+#endif
+            last_m2_event_us = now_m2;
+
+#ifndef M2_FRAME_CLOCK_SHADOW_ONLY
+            // Only DRIVES pacing once the NMI vector has been silent for 2+
+            // frames. While the NMI is alive it is the more direct evidence of
+            // vblank, and the M2 boundary lands on top of it (both are locked
+            // to the console crystal) - so the clock stays subordinate and
+            // simply takes over the moment the NMI stops.
+            if (last_nmi_event_us == 0 || (now_m2 - last_nmi_event_us) > 30000)
+            {
+                if (last_frame_signal_us == 0 || (now_m2 - last_frame_signal_us) > 10000)
+                {
+                    frame_signal = true;
+                    last_frame_signal_us = now_m2;
+#ifdef ENABLE_VBLANK_INSTRUMENTATION
+                    vbstat_m2_driven += 1;
+#endif
+                }
+            }
+#endif
+        }
+
         // NMI vector fetch ($FFFA/$FFFB read) = vblank start
         if (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_NMI))
         {
@@ -841,6 +1014,13 @@ void __not_in_flash_func(handle_bus_to_detect_memory_writes)()
             } while (!pio_sm_is_rx_fifo_empty(BUS_PIO, BUS_SM_NMI));
             nmi_vector_seen = true;
             uint32_t now = time_us_32();
+            // the NMI is back after a gap (or is the first one ever): put the
+            // M2 frame clock back in phase with it
+            if (last_nmi_event_us == 0 || (now - last_nmi_event_us) > 25000)
+            {
+                m2_frame_anchor();
+                last_m2_event_us = 0; // period stats restart with the new phase
+            }
             // accept at most one vblank event per 10ms: dedupes the $FFFA/$FFFB
             // pair when the snapshot ran between the two pushes (NMI can never
             // legitimately re-fire this fast - NTSC 16.6ms, PAL 20ms)
@@ -1166,6 +1346,63 @@ static uint32_t read_memory_ingame(uint32_t address, uint8_t *buffer, uint32_t n
     return num_bytes;
 }
 
+/*
+ * "Beaten game" detection.
+ *
+ * RetroAchievements awards beaten credit when every core PROGRESSION
+ * achievement is unlocked AND, for sets that define any, at least one
+ * WIN_CONDITION achievement is unlocked. Sets that declare neither type cannot
+ * award it, so they never report beaten. rcheevos has no event for this (only
+ * RC_CLIENT_EVENT_GAME_COMPLETED, which is mastery), so the state is derived
+ * from the achievement list.
+ *
+ * The list is walked instead of counted incrementally: it costs a couple of
+ * hundred iterations on an unlock (never in the frame path) and stays correct
+ * across rc_client_reset and server-side unlocks arriving mid-session.
+ */
+static bool game_is_beaten()
+{
+    if (g_client == NULL || g_client->game == NULL)
+        return false;
+
+    uint32_t progression = 0, progression_unlocked = 0;
+    uint32_t win = 0, win_unlocked = 0;
+
+    for (rc_client_subset_info_t *subset = g_client->game->subsets; subset != NULL; subset = subset->next)
+    {
+        rc_client_achievement_info_t *achievement = subset->achievements;
+        rc_client_achievement_info_t *stop = achievement + subset->public_.num_achievements;
+        for (; achievement < stop; achievement += 1)
+        {
+            if (!(achievement->public_.category & RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE))
+                continue;
+            bool unlocked = (achievement->public_.state == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED);
+            if (achievement->public_.type == RC_CLIENT_ACHIEVEMENT_TYPE_PROGRESSION)
+            {
+                progression += 1;
+                if (unlocked)
+                    progression_unlocked += 1;
+            }
+            else if (achievement->public_.type == RC_CLIENT_ACHIEVEMENT_TYPE_WIN)
+            {
+                win += 1;
+                if (unlocked)
+                    win_unlocked += 1;
+            }
+        }
+    }
+
+    if (progression == 0 && win == 0)
+        return false; // set has no beaten criteria
+    if (progression_unlocked < progression)
+        return false;
+    return (win == 0) || (win_unlocked > 0);
+}
+
+// set at load time so a game already beaten in a previous session does not
+// celebrate again; flipped once when the beat actually happens on this run
+static bool game_beaten_reported = false;
+
 // callback function for the RetroAchievements login call
 static void rc_client_login_callback(int result, const char *error_message, rc_client_t *client, void *callback_userdata)
 {
@@ -1224,6 +1461,11 @@ static void rc_client_load_game_callback(int result, const char *error_message, 
             sprintf(aux, "ACH_SUMMARY=%u;%u\r\n", summary.num_unlocked_achievements, summary.num_core_achievements);
             printf(aux);
             uart_puts(UART_ID, aux);
+
+            // baseline the beaten state: if the player already beat this game
+            // in an earlier session, this run must not celebrate it again
+            game_beaten_reported = game_is_beaten();
+            printf("Beaten at load: %s\n", game_beaten_reported ? "yes" : "no");
         }
 
         // Defer serial buffer shrink + core 1 launch to the main loop. We
@@ -1251,6 +1493,17 @@ static void achievement_triggered(const rc_client_achievement_t *achievement)
     achievement_data.id = achievement->id;
     achievement_data.event = RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED;
     fifo_enqueue(&achievements_fifo, achievement_data);
+
+    // queued behind the achievement itself, so the ESP32 shows the unlock
+    // first and only then runs the beaten celebration
+    if (!game_beaten_reported && game_is_beaten())
+    {
+        game_beaten_reported = true;
+        achievement_t beaten_data;
+        beaten_data.id = achievement->id; // the unlock that completed the game
+        beaten_data.event = EVENT_GAME_BEATEN;
+        fifo_enqueue(&achievements_fifo, beaten_data);
+    }
 }
 
 // send the achievements status to the ESP32
@@ -1484,6 +1737,13 @@ int main()
                 uart_puts(UART_ID, aux);
                 printf(aux);
             }
+            else if (achievement_data.event == EVENT_GAME_BEATEN)
+            {
+                // all progression (and a win condition, when the set has one)
+                // are unlocked - the game has been beaten on this run
+                uart_puts(UART_ID, "GAME_BEATEN\r\n");
+                printf("GAME_BEATEN\n");
+            }
             else if (achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW || achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW || achievement_data.event == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE)
             {
                 char aux[256];
@@ -1581,8 +1841,9 @@ int main()
                 }
             }
 
-            // simulate a frame every ~16667us (for 60hz) if we cannot detect any frame on the bus
-            // (NMI disabled and no OAM DMA, e.g. during forced-blank loading screens)
+            // simulate a frame every ~16667us (for 60hz) if we cannot detect any frame on the bus.
+            // With the M2 frame clock active this is a last-resort net only: M2 keeps ticking
+            // whenever the console is powered, so reaching this means the bus itself went away.
             u_int64_t window = FRAME_TIME_US << 1; // two frames time window when coming from the bus event strategy
             if (last_frame_detection_strategy == 1) {
                 window = FRAME_TIME_US; 
@@ -1637,6 +1898,26 @@ int main()
                            (unsigned long)vbstat_oam_lat_max_us, (unsigned long)vbstat_timer_frames,
                            (unsigned long)vbstat_resets, (unsigned long)vbstat_stage_peak,
                            (unsigned long)vbstat_stage_overflows);
+                    {
+                        static uint32_t vbm2_prev_pushes = 0;
+                        static uint32_t vbm2_prev_sum = 0;
+                        uint32_t m_pushes = vbstat_m2_pushes;
+                        uint32_t m_sum = vbstat_m2_period_sum_us;
+                        uint32_t d_pushes = m_pushes - vbm2_prev_pushes;
+                        uint32_t d_msum = m_sum - vbm2_prev_sum;
+                        vbm2_prev_pushes = m_pushes;
+                        vbm2_prev_sum = m_sum;
+                        uint32_t m_avg = (d_pushes > 0) ? (d_msum / d_pushes) : 0;
+                        uint32_t m_mn = (vbstat_m2_period_min_us == 0xFFFFFFFF) ? 0 : vbstat_m2_period_min_us;
+                        // avg must match the VBSTAT nmi avg (~16639us NTSC / ~19997us PAL)
+                        // and must not walk between reports; driven>0 only while NMI is silent
+                        printf("VBM2: pushes=%lu avg=%luus min=%luus max=%luus driven=%lu anchors=%lu\n",
+                               (unsigned long)d_pushes, (unsigned long)m_avg,
+                               (unsigned long)m_mn, (unsigned long)vbstat_m2_period_max_us,
+                               (unsigned long)vbstat_m2_driven, (unsigned long)vbstat_m2_anchors);
+                        vbstat_m2_period_min_us = 0xFFFFFFFF;
+                        vbstat_m2_period_max_us = 0;
+                    }
 #ifdef ENABLE_PPU_RD_VBLANK
                     {
                         static uint32_t vbppu_prev_events = 0;
