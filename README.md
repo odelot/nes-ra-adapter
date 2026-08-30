@@ -15,6 +15,12 @@ Repository of the **NES RetroAchievements Adapter** project – a maker initiati
     <img width="70%" src="https://github.com/odelot/nes-ra-adapter/blob/main/images/version1.0.jpg">  
 </p>
 
+**Famicom version by mi213!**
+
+<p align="center">  
+    <img width="70%" src="https://github.com/odelot/nes-ra-adapter/blob/main/images/famicom.jpg">  
+</p>
+
 ---
 
 ## Table of Contents
@@ -161,7 +167,7 @@ The second command writes the CRC32↔RA-hash map (`ra_rash_map.bin`) into the L
 The adapter uses two microcontrollers working together:
 
 <p align="center">
-  <img width="80%"  src="images/architecture-v1.4.svg"/>
+  <img width="90%"  src="images/architecture-v1.4.svg"/>
 </p>
 
 ### Raspberry Pi Pico
@@ -202,6 +208,7 @@ The adapter uses two microcontrollers working together:
 ## Version History
 
 - **Version 1.4 (2026-08-30)**
+  - Famicom PCBs and 3d printed cases by mi213 \o/
   - Complete rewrite of the bus monitoring engine on the Pico: the PIO now captures exactly one sample per CPU write cycle (replacing ~10x oversampling and the stable-value heuristic), DMA and its ping-pong buffers were removed (~16KB of RAM freed), and core 1 drains the PIO FIFOs directly with much lower latency.
   - Precise vblank detection: a dedicated PIO state machine watches the CPU fetching the NMI vector ($FFFA/$FFFB), marking the exact start of vblank, validated on real hardware at 60.099Hz with ±5µs jitter. Games that never do OAM DMA (e.g. Mike Tyson's Punch-Out!!) are now frame-accurate instead of relying on simulated frames. Writes to $4014 and a timer remain as fallbacks for games running with NMI disabled.
   - Console RESET detection via the RESET vector ($FFFC/$FFFD): pressing the console reset button now resets the rcheevos runtime state (hit counts, indicators), the same way emulators do, no more power cycling.
