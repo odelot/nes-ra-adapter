@@ -1,8 +1,8 @@
 # Circuit Schematics and PCB
 
-## Final Version 1.0 - Miniaturized 
+## Version 1.0 - NES
 
-Finally you can use the adapter without open your NES. Order the PCB, aseembly it and be happy ;-) Made by the awesome GH.
+Finally you can use the adapter without opening your NES. Order the PCB, assemble it and be happy ;-) Made by the awesome GH.
 
 <p align="center">
   <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/board1.0.png"/>
@@ -12,11 +12,15 @@ Finally you can use the adapter without open your NES. Order the PCB, aseembly i
   <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/board1.0-assembled.png"/>
 </p>
 
-Schematics: (very poor version - we will upload a decent file soon)
+Schematics:
 
 <p align="center">
   <img width="70%"  src="https://github.com/odelot/nes-ra-adapter/blob/main/images/schematic-v1.0.png"/>
 </p>
+
+## Version 1.0 - Famicom
+
+There is also a Famicom version made by mi213 - Thanks! ❤️
 
 ## Prototype PCBs Sets 
 

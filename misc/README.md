@@ -29,9 +29,9 @@ This can be useful if you want to understand how we compute MD5 hashes (RA Hashe
 
 ## shrink-lambda-function
 
-The list of achievements retrieved from the RA API is designed for emulators, not microcontrollers with limited RAM. The Raspberry Pi Pico has only 32KB available for handling HTTP responses, while the ESP32 employs several optimizations to reduce response size. Currently, ESP32 can receive responses of up to 61,000 bytes — just enough to support Super Mario Bros. 3 — before shrinking the data to send to the Pico.
+The list of achievements retrieved from the RA API is designed for emulators, not microcontrollers with limited RAM. Since version 1.4, the ESP32 cleans the response while it is still being downloaded (see `PatchStreamFilter.h`), so the raw payload never has to fit in RAM — only the cleaned result does (FF3, for example, goes from 129KB raw to ~83KB clean). The Pico reserves ~100KB for the achievement list during game load, and before sending the set the ESP32 estimates the peak heap the Pico will need; if it goes over the budget (~168KB), rich presence and the most expensive achievements are dropped, always keeping the ones flagged as *progression* or *win_condition*.
 
-However, if you want to play a game with a large number of achievements, leaderboards, and other data, and its response exceeds 61,000 bytes, you can deploy this Node.js Lambda function on AWS with an API Gateway in front of it. This setup acts as a proxy, reducing the response size to 32KB by removing unnecessary fields—or, in extreme cases, trimming some achievements.
+Even so, if you prefer to shrink the response server-side, or to control exactly which achievements are trimmed, you can deploy this Node.js Lambda function on AWS with an API Gateway in front of it. This setup acts as a proxy, reducing the response size by removing unnecessary fields—or, in extreme cases, trimming some achievements.
 
 If you choose this approach (which I used extensively for testing), be sure to modify `nes-esp-firmware.ino` to enable it and set the Lambda URL. You'll also need to build and manually upload the modified firmware to the ESP32.
 
