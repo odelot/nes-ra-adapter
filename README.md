@@ -183,8 +183,6 @@ The adapter uses two microcontrollers working together:
 
 ## Limitations
 
-- **Testing with different games:** The adapter has been tested with more than 50 games. Check the [compatibility page](Compatibility.md) for more details
-
 - **Server Response Size:** During game load the Pico reserves ~100KB of RAM for the RetroAchievements response. The ESP32 cleans the response while it is still being downloaded, so raw payloads bigger than that are supported (FF3, for example, goes from 129KB raw to ~83KB clean). Before sending the set to the Pico, the ESP32 also estimates the peak heap the Pico will need to load it; when the estimate goes over the budget (~168KB), it drops the rich presence first and then the most expensive achievements (achievements flagged as *progression* or *win_condition* are always kept) so the game can still be beaten. The source code of an AWS Lambda function is also available (misc folder) if you prefer to shrink the response server-side.
 
 - **Rare Limitation: Some Games May Be Unmasterable** A single achievement with an extremely large definition can exceed the Raspberry Pi Pico's RAM when expanded by the rcheevos library (one Final Fantasy achievement alone expands to ~140KB of runtime structures, more than the RP2040 can hold together with everything else). So far this affects FF1 and FF3 (in FF3, 8 achievements have to be dropped for the set to fit, so the game can be beaten but not mastered). A future hardware revision based on the RP2350 (520KB of RAM) will remove this limit.
