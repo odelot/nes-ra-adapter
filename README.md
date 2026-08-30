@@ -232,7 +232,7 @@ The adapter uses two microcontrollers working together:
 
 Everyone is welcome to contribute!
 - Submit improvements and pull requests via GitHub.
-- Join our Discord channel: [https://discord.gg/baM7y3xbsA](https://discord.gg/baM7y3xbsA)
+- Join our Discord channel: [https://discord.com/invite/6eYGq7NNfF](https://discord.com/invite/6eYGq7NNfF)
 - Support us by [buying a coffee](https://buymeacoffee.com/nes.ra.adapter) or [Patreon](https://www.patreon.com/RetroAchievementsHardwareLab) .
 
 ---
