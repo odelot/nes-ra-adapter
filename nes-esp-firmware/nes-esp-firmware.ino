@@ -16,8 +16,8 @@
    Finally, it orchestrates the opening and closing of the bus between the NES and the
    cartridge by controlling analog switches.
 
-   Date:             2026-05-15
-   Version:          1.3
+   Date:             2026-07-19
+   Version:          1.4
    By odelot
 
    Arduino IDE ESP32 Boards: v3.0.7
@@ -94,6 +94,8 @@
 #include <Wire.h>
 #include <Ticker.h>
 #include "CharBufferStream.h"
+#include "JsonCleaner.h"
+#include "PatchStreamFilter.h"
 
 #ifdef ENABLE_LCD
   #include <PNGdec.h>
@@ -131,6 +133,16 @@
 #define SERIAL_COMM_TX_DELAY_MS 5
 
 #define SERIAL_MAX_PICO_BUFFER 102400
+
+/**
+ * Ceiling for the Pico's estimated peak heap need during rc_client load
+ * (payload + parsed triggers + rich presence + strings - see
+ * estimate_pico_load_need_buffer). The Pico has ~191KB of heap; 168KB leaves
+ * room for API transients and fragmentation. Calibrated so SMB3's full set
+ * (need ~157KB, known to fit) passes untouched while FF3's (need ~353KB,
+ * known to PANIC) gets trimmed.
+ */
+#define PICO_LOAD_LIMIT 172032
 /**
  * defines for the fifo used to store achievements to be showed on screen
  */
@@ -176,6 +188,14 @@
 #define NOTE_C5  523
 #define NOTE_GS4 415
 #define NOTE_AS4 466
+#define NOTE_CS6 1109
+#define NOTE_DS6 1245
+#define NOTE_F6  1397
+#define NOTE_FS6 1480
+#define NOTE_GS6 1661
+#define NOTE_A6  1760
+#define NOTE_AS6 1865
+#define NOTE_B6  1976
 
 
 #define SOUND_PIN 10
@@ -205,6 +225,15 @@ typedef enum HttpRequestResult
   HTTP_ERR_HTTP_4XX = -3,
   HTTP_ERR_TIMEOUT = -4,
   HTTP_ERR_REPONSE_TOO_BIG = -5,
+};
+
+// RA login outcome - tells bad credentials apart from network/RA outage so the
+// caller can decide whether to save credentials and what to show on the screen
+typedef enum LoginResult
+{
+  LOGIN_OK = 0,
+  LOGIN_ERR_INVALID_CREDENTIALS = 1,
+  LOGIN_ERR_NETWORK = 2,
 };
 
 // Device state machine states
@@ -293,6 +322,7 @@ bool fifo_is_full(achievements_FIFO_t *fifo);
 bool fifo_enqueue(achievements_FIFO_t *fifo, achievements_t value);
 bool fifo_dequeue(achievements_FIFO_t *fifo, achievements_t *value);
 void show_achievement(achievements_t achievement);
+void redraw_achievement_screen(const achievements_t &achievement, uint16_t bgColor);
 
 
 // global variables for LED control
@@ -353,6 +383,9 @@ size_t serial_buffer_len = 0;
 #define LARGE_BUFFER_SIZE 102400 // 100 KB 
 #define SMALL_BUFFER_SIZE 10240 // 10 KB
 CharBufferStream response;
+// Streaming cleaner for patch downloads - lets the raw response exceed the
+// buffer as long as the cleaned result fits (staging allocated per download)
+PatchStreamFilter patch_filter;
 // HTTP client global to reuse SSL buffers (avoids fragmentation)
 NetworkClientSecure globalSecureClient;
 HTTPClient globalHttpClient;
@@ -366,6 +399,20 @@ String game_image;
 String game_id;
 String game_session;
 bool go_back_to_title_screen = false;
+
+// set by GAME_BEATEN, consumed by the main loop once the achievement that
+// completed the game is on screen
+bool pending_game_beaten = false;
+
+// last achievement drawn by show_achievement - the BEATEN celebration runs
+// after it returns and needs it to flash that same screen
+achievements_t last_shown_achievement;
+bool has_last_shown_achievement = false;
+
+// the "** BEATEN! **" banner is covering the splash footer and must be
+// repainted when we go back to the title screen (unlike MASTERED, the player
+// keeps playing after beating the game)
+bool beaten_banner_visible = false;
 bool already_showed_title_screen = false;
 long go_back_to_title_screen_timestamp;
 unsigned long last_wifi_status_update = 0;
@@ -537,362 +584,9 @@ bool get_MD5(const char* crc, bool first_bank, char* md5_out, size_t md5_out_siz
   file.close();
   return false;
 }
-// ============================================================================
-// JSON cleaning functions that operate directly on CharBufferStream (in-place)
-// They do not copy memory - they modify the original buffer
-// ============================================================================
 
-// Remove spaces, newlines, and tabs outside of strings (in-place on CharBufferStream)
-void remove_space_new_lines_buffer(CharBufferStream &buf)
-{
-  char* data = buf.data();
-  size_t len = buf.length();
-  bool inside_quotes = false;
-  size_t write_idx = 0;
-
-  for (size_t read_idx = 0; read_idx < len; read_idx++)
-  {
-    char c = data[read_idx];
-
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
-      inside_quotes = !inside_quotes;
-    }
-
-    if (inside_quotes || (c != ' ' && c != '\n' && c != '\r' && c != '\t')) {
-      data[write_idx++] = c;
-    }
-  }
-  buf.setLength(write_idx);
-}
-
-// Remove a complete JSON field (in-place on CharBufferStream)
-void remove_json_field_buffer(CharBufferStream &buf, const char* field_to_remove)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  size_t len = buf.length();
-  size_t field_len = strlen(field_to_remove);
-  
-  bool inside_quotes = false;
-  bool inside_array = false;
-  bool skip_field = false;
-  size_t read_idx = 0, write_idx = 0, skip_init = 0;
-
-  while (read_idx < len)
-  {
-    char c = data[read_idx];
-
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
-      inside_quotes = !inside_quotes;
-    }
-
-    if (c == '[' && skip_field) inside_array = true;
-    if (c == ']' && skip_field) inside_array = false;
-
-    // Detect start of field to remove
-    if (inside_quotes && 
-        read_idx + 1 + field_len + 1 < len &&
-        strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
-        data[read_idx + field_len + 1] == '"')
-    {
-      skip_field = true;
-      skip_init = read_idx;
-    }
-
-    if (!skip_field) {
-      data[write_idx++] = c;
-    }
-
-    // End of field
-    if (skip_field && read_idx + 1 < len && data[read_idx + 1] == '}') {
-      skip_field = false;
-      if (skip_init > 0 && data[skip_init - 1] == ',') {
-        write_idx--;
-      }
-    }
-    else if (skip_field && data[read_idx] == ',' && !inside_array && !inside_quotes) {
-      skip_field = false;
-    }
-
-    read_idx++;
-  }
-  buf.setLength(write_idx);
-}
-
-// Clean the string value of a field - replace with "" (in-place on CharBufferStream)
-void clean_json_field_str_value_buffer(CharBufferStream &buf, const char* field_to_remove)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  size_t len = buf.length();
-  size_t field_len = strlen(field_to_remove);
-  
-  bool inside_quotes = false;
-  bool skip_field = false;
-  bool remove_next_str = false;
-  size_t read_idx = 0, write_idx = 0, skip_init = 0;
-
-  while (read_idx < len)
-  {
-    char c = data[read_idx];
-
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\'))
-    {
-      inside_quotes = !inside_quotes;
-      if (inside_quotes && remove_next_str) {
-        skip_field = true;
-        data[write_idx++] = '"';
-      }
-      if (!inside_quotes && remove_next_str && read_idx > skip_init) {
-        remove_next_str = false;
-        skip_field = false;
-      }
-    }
-
-    if (inside_quotes &&
-        read_idx + 1 + field_len + 1 < len &&
-        strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
-        data[read_idx + field_len + 1] == '"')
-    {
-      remove_next_str = true;
-      skip_init = read_idx + field_len + 2;
-    }
-
-    if (!skip_field) {
-      data[write_idx++] = c;
-    }
-    read_idx++;
-  }
-  buf.setLength(write_idx);
-}
-
-// Clean the array value of a field - replace with [] (in-place on CharBufferStream)
-void clean_json_field_array_value_buffer(CharBufferStream &buf, const char* field_to_remove)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  size_t len = buf.length();
-  size_t field_len = strlen(field_to_remove);
-  
-  bool inside_quotes = false;
-  bool skip_field = false;
-  bool remove_next_array = false;
-  int array_depth = 0;
-  size_t read_idx = 0, write_idx = 0;
-
-  while (read_idx < len)
-  {
-    char c = data[read_idx];
-
-    // Update quote state first (handling escaped quotes)
-    if (c == '"' && (read_idx == 0 || data[read_idx - 1] != '\\')) {
-      inside_quotes = !inside_quotes;
-    }
-
-    // Only process [ and ] when NOT inside quotes
-    if (!inside_quotes) {
-      if (c == '[') {
-        if (remove_next_array) {
-          if (array_depth == 0) {
-            skip_field = true;
-            data[write_idx++] = '[';
-          }
-          array_depth++;
-        }
-      }
-      if (c == ']') {
-        if (remove_next_array) {
-          array_depth--;
-          if (array_depth == 0) {
-            remove_next_array = false;
-            skip_field = false;
-          }
-        }
-      }
-    }
-
-    // Detect the field name to remove
-    if (inside_quotes &&
-        read_idx + 1 + field_len + 1 < len &&
-        strncmp(data + read_idx + 1, field_to_remove, field_len) == 0 &&
-        data[read_idx + field_len + 1] == '"')
-    {
-      remove_next_array = true;
-    }
-
-    if (!skip_field) {
-      data[write_idx++] = c;
-    }
-    read_idx++;
-  }
-  buf.setLength(write_idx);
-}
-
-// Remove achievements with flags 5 (unofficial) - in-place on CharBufferStream
-void remove_achievements_with_flags_5_buffer(CharBufferStream &buf)
-{
-  remove_space_new_lines_buffer(buf);
-  
-  char* data = buf.data();
-  int achvStart = buf.indexOf("\"Achievements\":[");
-  if (achvStart == -1) return;
-
-  int arrayStart = buf.indexOf("[", achvStart);
-  int arrayEnd = buf.indexOf("]", arrayStart);
-  if (arrayStart == -1 || arrayEnd == -1) return;
-
-  int objCount = 0;
-  int pos = arrayStart + 1;
-  
-  while (pos < arrayEnd)
-  {
-    int objStart = buf.indexOf("{", pos);
-    if (objStart == -1 || objStart > arrayEnd) break;
-
-    int objEnd = objStart;
-    int braces = 1;
-    bool inString = false;
-    while (braces > 0 && objEnd < arrayEnd) {
-      objEnd++;
-      char ch = data[objEnd];
-      if (ch == '"' && (objEnd == 0 || data[objEnd - 1] != '\\')) {
-        inString = !inString;
-      }
-      if (!inString) {
-        if (ch == '{') braces++;
-        else if (ch == '}') braces--;
-      }
-    }
-
-    if (objEnd >= arrayEnd) break;
-    objCount++;
-
-    // Search for "Flags":5 inside the object
-    bool hasFlags5 = false;
-    for (int i = objStart; i < objEnd - 8; i++) {
-      if (strncmp(data + i, "\"Flags\":5", 9) == 0) {
-        hasFlags5 = true;
-        break;
-      }
-    }
-
-    if (hasFlags5)
-    {
-      int removeStart = objStart;
-      while (removeStart > arrayStart && (data[removeStart - 1] == ' ' || data[removeStart - 1] == '\n'))
-        removeStart--;
-      if (data[removeStart - 1] == ',')
-        removeStart--;
-      if (objCount == 1 && objEnd + 1 < (int)buf.length() && data[objEnd + 1] == ',')
-        objEnd++;
-
-      buf.removeRange(removeStart, objEnd - removeStart + 1);
-      arrayEnd = buf.indexOf("]", arrayStart);
-      pos = removeStart;
-    }
-    else
-    {
-      pos = objEnd + 1;
-    }
-  }
-}
-
-// Helper: find closing quote handling escaped quotes
-int findClosingQuote(char* data, int start, int limit) {
-  for (int i = start; i < limit; i++) {
-    if (data[i] == '"' && (i == 0 || data[i - 1] != '\\')) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-// Remove achievements with very large MemAddr - in-place on CharBufferStream
-void remove_achievements_with_long_MemAddr_buffer(CharBufferStream &buf, uint32_t maxSize)
-{
-  char* data = buf.data();
-  int achievementsPos = buf.indexOf("\"Achievements\"");
-  if (achievementsPos == -1) return;
-
-  int arrayStart = buf.indexOf("[", achievementsPos);
-  int arrayEnd = buf.indexOf("]", arrayStart);
-  if (arrayStart == -1 || arrayEnd == -1) return;
-
-  int pos = arrayStart + 1;
-  
-  while (pos < arrayEnd)
-  {
-    int objStart = buf.indexOf("{", pos);
-    if (objStart == -1 || objStart >= arrayEnd) break;
-
-    int objEnd = objStart;
-    int braceCount = 1;
-    bool inString = false;
-    while (braceCount > 0 && objEnd + 1 < (int)buf.length()) {
-      objEnd++;
-      char ch = data[objEnd];
-      if (ch == '"' && (objEnd == 0 || data[objEnd - 1] != '\\')) {
-        inString = !inString;
-      }
-      if (!inString) {
-        if (ch == '{') braceCount++;
-        else if (ch == '}') braceCount--;
-      }
-    }
-
-    if (objEnd >= arrayEnd) break;
-
-    // Search for "MemAddr"
-    int memAddrPos = -1;
-    for (int i = objStart; i < objEnd - 8; i++) {
-      if (strncmp(data + i, "\"MemAddr\"", 9) == 0) {
-        memAddrPos = i;
-        break;
-      }
-    }
-
-    if (memAddrPos == -1) {
-      pos = objEnd + 1;
-      continue;
-    }
-
-    int valueStart = buf.indexOf("\"", memAddrPos + 9);
-    if (valueStart == -1 || valueStart > objEnd) {
-      pos = objEnd + 1;
-      continue;
-    }
-
-    int valueEnd = findClosingQuote(data, valueStart + 1, objEnd);
-    if (valueEnd == -1 || valueEnd > objEnd) {
-      pos = objEnd + 1;
-      continue;
-    }
-
-    int memAddrLength = valueEnd - valueStart - 1;
-    
-    if (memAddrLength > (int)maxSize)
-    {
-      int removeStart = objStart;
-      int removeEnd = objEnd + 1;
-
-      if (removeEnd < (int)buf.length() && data[removeEnd] == ',')
-        removeEnd++;
-      else if (removeStart > arrayStart + 1 && data[removeStart - 1] == ',')
-        removeStart--;
-
-      buf.removeRange(removeStart, removeEnd - removeStart);
-      arrayEnd -= (removeEnd - removeStart);
-      pos = removeStart;
-    }
-    else
-    {
-      pos = objEnd + 1;
-    }
-  }
-}
+// JSON cleaning functions (remove_json_field_buffer & friends) live in JsonCleaner.h,
+// shared with PatchStreamFilter and desktop unit tests.
 
 
 void print_memory_stats(const char* label = "") {
@@ -1140,6 +834,36 @@ void play_victory_sound()
 
 }
 
+void play_beat_sound ()
+{
+    const int NOTE_GAP = 20;
+
+    const int SHORT = 150;
+    const int REST  = 150;
+    const int LONG  = 2550;
+
+    tone(SOUND_PIN, NOTE_DS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_DS6); delay(SHORT); noTone(SOUND_PIN); delay(REST);
+
+    tone(SOUND_PIN, NOTE_F6);  delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_F6);  delay(SHORT); noTone(SOUND_PIN); delay(REST);
+
+    tone(SOUND_PIN, NOTE_FS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_FS6); delay(SHORT); noTone(SOUND_PIN); delay(REST);
+
+    tone(SOUND_PIN, NOTE_GS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_FS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_GS6); delay(SHORT); noTone(SOUND_PIN); delay(NOTE_GAP);
+
+    tone(SOUND_PIN, NOTE_AS6); delay(LONG);
+    noTone(SOUND_PIN);
+}
+
 // play a sound to indicate an error
 void play_error_sound()
 {
@@ -1332,6 +1056,41 @@ void show_title_screen()
 #endif
 }
 
+/**
+ * Redraw the achievement screen over a given background color.
+ *
+ * Shared by the MASTERED celebration (inside show_achievement) and the BEATEN
+ * one (which runs later, from the main loop) so both flash the whole panel the
+ * same way. The image is re-decoded from the file the achievement screen
+ * already downloaded, so this works after show_achievement has returned.
+ */
+void redraw_achievement_screen(const achievements_t &achievement, uint16_t bgColor)
+{
+#ifdef ENABLE_LCD
+  char file_name[64];
+  sprintf(file_name, "/achievement_%d.png", achievement.id);
+
+  tft.fillRoundRect(20, 80, 200, 120, 12, bgColor);
+  print_line_bgcolor("New Achievement Unlocked!", 0, 0, bgColor);
+  print_line_bgcolor("", 1, -1, bgColor);
+  print_line_bgcolor("", 2, -1, bgColor);
+  print_line_bgcolor("", 3, -1, bgColor);
+  print_line_bgcolor(achievement.title.c_str(), 4, -1, bgColor);
+
+  // Redraw the achievement image
+  x_pos = 50;
+  y_pos = 110;
+  int16_t rc = png->open(file_name, png_open, png_close, png_read, png_seek, png_draw);
+  if (rc == PNG_SUCCESS)
+  {
+    tft.startWrite();
+    png->decode(NULL, 0);
+    tft.endWrite();
+    png->close();
+  }
+#endif
+}
+
 // show the achievement screen
 void show_achievement(achievements_t achievement)
 {
@@ -1356,36 +1115,24 @@ void show_achievement(achievements_t achievement)
   char file_name[64];
   sprintf(file_name, "/achievement_%d.png", achievement.id);
   try_download_file(achievement.url, file_name);
-  
+
   // Helper lambda to redraw the achievement screen with a specific background color
   auto redrawAchievementScreen = [&](uint16_t bgColor) {
-    tft.fillRoundRect(20, 80, 200, 120, 12, bgColor);
-    print_line_bgcolor("New Achievement Unlocked!", 0, 0, bgColor);
-    print_line_bgcolor("", 1, -1, bgColor);
-    print_line_bgcolor("", 2, -1, bgColor);
-    print_line_bgcolor("", 3, -1, bgColor);
-    print_line_bgcolor(achievement.title.c_str(), 4, -1, bgColor);
-    
-    // Redraw the achievement image
-    x_pos = 50;
-    y_pos = 110;
-    int16_t rc = png->open(file_name, png_open, png_close, png_read, png_seek, png_draw);
-    if (rc == PNG_SUCCESS)
-    {
-      tft.startWrite();
-      png->decode(NULL, 0);
-      tft.endWrite();
-      png->close();
-    }
+    redraw_achievement_screen(achievement, bgColor);
   };
-  
+
+  // Keep the (already truncated) achievement around: the BEATEN celebration
+  // runs later, from the main loop, and needs it to flash this same screen
+  last_shown_achievement = achievement;
+  has_last_shown_achievement = true;
+
   // Initial draw with black background
   redrawAchievementScreen(TFT_BLACK);
   Serial.println(achievement.title);
   
   // Check if game was mastered (all achievements unlocked)
   //if (unlocked_achievements == 1) //test
-  if (unlocked_achievements > 0 && unlocked_achievements == total_achievements)
+  if (unlocked_achievements > 1 && unlocked_achievements == total_achievements)
   {
     // MASTERED! Celebration mode
     Serial.println(F("GAME MASTERED! Playing victory fanfare"));
@@ -1537,56 +1284,81 @@ void wifi_manager_init(WiFiManager &wm)
 /**
  * functions related to the RA login
  */
-String try_login_RA(String ra_user, String ra_pass)
+String try_login_RA(String ra_user, String ra_pass, LoginResult &login_result)
 {
   // print_memory_stats("BEFORE LOGIN");
-  
+
+  login_result = LOGIN_ERR_NETWORK;
+
   // Construir URL completa em buffer fixo
   char login_url[384];
-  snprintf(login_url, sizeof(login_url), "%sr=login&u=%s&p=%s", 
+  snprintf(login_url, sizeof(login_url), "%sr=login&u=%s&p=%s",
            base_url, ra_user.c_str(), ra_pass.c_str());
 
-  
+
   // print_memory_stats("BEFORE HTTP REQUEST (login)");
-  
-  int ret = perform_http_request_buffer(login_url, GET, "", 0, response, true, 3, 5000, 500);
-  
+
+  int ret = perform_http_request_buffer(login_url, GET, "", 0, response, true, 3, 5000, 500, nullptr);
+
   // print_memory_stats("AFTER HTTP REQUEST (login)");
-  
+
+  String ra_token = "";
+
   if (ret < 0)
   {
     Serial.print(F("request error: "));
     Serial.println(http_request_result_to_cstr(ret));
+    if (ret == HTTP_ERR_HTTP_4XX)
+    {
+      login_result = LOGIN_ERR_INVALID_CREDENTIALS;
+    }
+  }
+  // RA answers login errors with HTTP 200 + {"Success":false,"Status":401,...},
+  // so the body must be checked before trusting the response
+  else if (extractBoolFromBuffer(response, "\"Success\"") == 0)
+  {
+    String server_error = extractJsonStringFromBuffer(response, "\"Error\":");
+    Serial.print(F("RA login refused: ")); Serial.println(server_error);
+    if (response.indexOf("invalid_credentials") != -1)
+    {
+      login_result = LOGIN_ERR_INVALID_CREDENTIALS;
+    }
+  }
+  else
+  {
+    ra_token = extractJsonStringFromBuffer(response, "\"Token\":");
+    ra_token.trim();
+    Serial.print(F("RA Token: ")); Serial.println(ra_token);
+  }
+
+  // print_memory_stats("AFTER TOKEN EXTRACT");
+
+  response.clear();
+
+  // print_memory_stats("AFTER LOGIN COMPLETE");
+
+  // Success:true but no usable token also counts as failure
+  if (ra_token.length() == 0)
+  {
     state = STATE_ERROR_LOGIN_FAILED;
     Serial0.print(F("ERROR=253-LOGIN_FAILED\r\n"));
     Serial.print(F("ERROR=253-LOGIN_FAILED\r\n"));
-    return String("null");
+    return String("");
   }
 
- 
-  String ra_token = extractTokenFromBuffer(response);
-  ra_token.trim();
-  
-  Serial.print(F("RA Token: ")); Serial.println(ra_token);
-  
-  // print_memory_stats("AFTER TOKEN EXTRACT");
-  
-  response.clear();
-  
-  // print_memory_stats("AFTER LOGIN COMPLETE");
-
+  login_result = LOGIN_OK;
   return ra_token;
 }
 
-// Versão que extrai token do CharBufferStream sem criar cópia
-String extractTokenFromBuffer(CharBufferStream &buf)
+// Extrai um campo string do JSON no CharBufferStream sem criar cópia do buffer
+// (key deve incluir aspas e dois pontos, ex: "\"Token\":")
+String extractJsonStringFromBuffer(CharBufferStream &buf, const char* key)
 {
-  const char* key = "\"Token\":";
   int start = buf.indexOf(key);
   if (start == -1) return "";
 
   // Avança até o início do valor (pula aspas)
-  start = buf.indexOf("\"", start + 8);
+  start = buf.indexOf("\"", start + strlen(key));
   if (start == -1) return "";
 
   int end = buf.indexOf("\"", start + 1);
@@ -1595,13 +1367,35 @@ String extractTokenFromBuffer(CharBufferStream &buf)
   // Extrai substring diretamente
   char* data = buf.data();
   int len = end - start - 1;
-  if (len <= 0 || len > 64) return "";
-  
-  char token[65];
-  memcpy(token, data + start + 1, len);
-  token[len] = '\0';
-  
-  return String(token);
+  if (len <= 0 || len > 128) return "";
+
+  char value[129];
+  memcpy(value, data + start + 1, len);
+  value[len] = '\0';
+
+  return String(value);
+}
+
+// Lê um campo booleano do JSON no buffer, tolerando espaços depois da chave
+// ("Success":false ou "Success": false). Retorna 1 = true, 0 = false, -1 = ausente
+int extractBoolFromBuffer(CharBufferStream &buf, const char* key)
+{
+  int pos = buf.indexOf(key);
+  if (pos == -1) return -1;
+  pos += strlen(key);
+  char c;
+  while ((c = buf.charAt(pos)) != '\0')
+  {
+    if (c == 't') return 1;
+    if (c == 'f') return 0;
+    if (c == ':' || c == ' ' || c == '\t' || c == '\r' || c == '\n')
+    {
+      pos++;
+      continue;
+    }
+    return -1;
+  }
+  return -1;
 }
 
 
@@ -2001,6 +1795,8 @@ const char* http_request_result_to_cstr(int code)
 }
 
 // perform an HTTP request writing directly to CharBufferStream with retries and exponential backoff
+// When filter is given, response bytes are cleaned on the fly (streaming) before
+// reaching resp, so the raw response may be larger than resp's capacity.
 int perform_http_request_buffer(
     const char* url,
     HttpRequestMethod method,
@@ -2010,7 +1806,8 @@ int perform_http_request_buffer(
     bool isIdempotent,
     int maxRetries,
     int timeoutMs,
-    int retryDelayMs)
+    int retryDelayMs,
+    PatchStreamFilter* filter)
 {
   int attempt = 0;
   int wifiRetries = 3;
@@ -2050,7 +1847,7 @@ int perform_http_request_buffer(
       continue;
     }
     
-    const char user_agent[] = "NES_RA_ADAPTER/1.2 rcheevos/11.6";
+    const char user_agent[] = "NES_RA_ADAPTER/1.4 rcheevos/11.6";
     globalHttpClient.setUserAgent(user_agent);
 
     Serial.println(F("Sending request..."));
@@ -2075,14 +1872,18 @@ int perform_http_request_buffer(
         
         Serial.print(F("Content-Length: ")); Serial.print(contentLength); Serial.print(F(" (chunked: ")); Serial.print(isChunked); Serial.println(F(")"));
         
-        // Check if it fits in the buffer (if Content-Length is known)
-        if (contentLength > 0 && contentLength > (int)resp.capacity()) {
-          Serial.print(F("Response too big: ")); Serial.print(contentLength); Serial.print(F(" > ")); Serial.println(resp.capacity());
+        // Check if it fits in the buffer (if Content-Length is known).
+        // With a stream filter the raw size may exceed the buffer (it is cleaned
+        // on the fly); keep only a sanity cap against pathological responses.
+        int rawLimit = filter ? 409600 : (int)resp.capacity();
+        if (contentLength > 0 && contentLength > rawLimit) {
+          Serial.print(F("Response too big: ")); Serial.print(contentLength); Serial.print(F(" > ")); Serial.println(rawLimit);
           globalHttpClient.end();
           return HTTP_ERR_REPONSE_TOO_BIG;
         }
-        
+
         resp.clear();
+        if (filter) filter->restart(); // fresh state for this attempt
         // Smaller read buffer to reduce stack usage (256 is enough for chunked)
         uint8_t buff[256];
         size_t totalRead = 0;
@@ -2178,7 +1979,13 @@ int perform_http_request_buffer(
           if (toRead == 0) continue;
           
           size_t readBytes = stream->readBytes(buff, toRead);
-          size_t written = resp.write(buff, readBytes);
+          size_t written;
+          if (filter) {
+            filter->write(buff, readBytes); // cleans in-stream, writes survivors to resp
+            written = readBytes;
+          } else {
+            written = resp.write(buff, readBytes);
+          }
           totalRead += written;
           
           if (isChunked) {
@@ -2202,7 +2009,8 @@ int perform_http_request_buffer(
             }
           }
           
-          if (written < readBytes) {
+          bool bufferFull = filter ? filter->overflowed() : (written < readBytes);
+          if (bufferFull) {
             Serial.println(F("Buffer full during HTTP read"));
             globalHttpClient.end();
             return HTTP_ERR_REPONSE_TOO_BIG;
@@ -2216,6 +2024,15 @@ int perform_http_request_buffer(
           yield();
         }
         
+        if (filter) {
+          filter->finish(); // flush any partial staged data
+          if (filter->overflowed()) {
+            Serial.println(F("Filtered response exceeds buffer"));
+            globalHttpClient.end();
+            return HTTP_ERR_REPONSE_TOO_BIG;
+          }
+        }
+
         Serial.print(F("Total read: ")); Serial.print(totalRead); Serial.println(F(" bytes"));
         globalHttpClient.end();
         
@@ -2400,24 +2217,40 @@ void handle_req_command(const char* cmd, size_t cmd_len) {
   }
   
   // Prepare memory for large download
+  bool use_stream_filter = false;
   if (is_patch_request) {
     Serial.println(F("Preparing memory for large download..."));
     // Disable WiFi power save during large download (more stable)
     esp_wifi_set_ps(WIFI_PS_NONE);
+    // Clean the JSON while it downloads: the raw response may be bigger than
+    // the buffer as long as the cleaned result fits (e.g. FF3: 129KB -> ~83KB)
+    use_stream_filter = patch_filter.begin(&response);
+    if (!use_stream_filter) {
+      Serial.println(F("Patch filter staging alloc failed - downloading raw"));
+    }
     // Small delay to allow the system to free resources
     delay(50);
     yield();
   }
-  
+
   response.clear();
   print_memory_stats("BEFORE HTTP REQUEST (REQ handler)");
-  
+
   // Longer timeout for patch requests (30s) as the response can be large (30KB+)
   int request_timeout = is_patch_request ? 30000 : 5000;
-  
+
   // Execute HTTP request using char* version directly
-  int ret = perform_http_request_buffer(final_url, POST, data, data_len, response, true, 3, request_timeout, 500);
-  
+  int ret = perform_http_request_buffer(final_url, POST, data, data_len, response, true, 3, request_timeout, 500,
+                                        use_stream_filter ? &patch_filter : nullptr);
+
+  if (use_stream_filter) {
+    Serial.print(F("Stream filter: raw=")); Serial.print(patch_filter.rawBytes());
+    Serial.print(F(" kept=")); Serial.print(patch_filter.keptCount());
+    Serial.print(F(" dropped=")); Serial.print(patch_filter.droppedCount());
+    Serial.print(F(" filtered=")); Serial.println(response.length());
+    patch_filter.end(); // release the 10KB staging buffer
+  }
+
   if (ret < 0) {
     Serial.print(F("ERROR ON RESPONSE: "));
     Serial.println(http_request_result_to_cstr(ret));
@@ -2443,6 +2276,21 @@ void handle_req_command(const char* cmd, size_t cmd_len) {
       clean_json_field_array_value_buffer(response, "Leaderboards");      
       remove_achievements_with_flags_5_buffer(response);
       remove_achievements_with_long_MemAddr_buffer(response, 8192); // remove achievements with MemAddr > 8KB
+
+      // Keep the Pico's peak load memory within its heap: big sets (e.g. FF3)
+      // OOM the RP2040 during rc_client load even though the JSON fits. The
+      // trim drops rich presence first, then the most expensive achievements
+      // (never the progression/win_condition ones needed to beat the game).
+      uint32_t load_need = estimate_pico_load_need_buffer(response);
+      if (load_need > PICO_LOAD_LIMIT) {
+        Serial.print(F("Pico load limit exceeded: need=")); Serial.print(load_need);
+        Serial.print(F(" limit=")); Serial.println(PICO_LOAD_LIMIT);
+        int dropped_heavy = trim_achievements_to_pico_budget_buffer(response, PICO_LOAD_LIMIT);
+        Serial.print(F("Trimmed ")); Serial.print(dropped_heavy);
+        Serial.print(F(" heavy achievements; need now: "));
+        Serial.println(estimate_pico_load_need_buffer(response));
+      }
+
       if (response.length() > SERIAL_MAX_PICO_BUFFER) {
         remove_json_field_buffer(response, "RichPresencePatch");
       }
@@ -2688,6 +2536,9 @@ void handle_game_info_command(const char* cmd, size_t cmd_len) {
   // Reset achievement counters for new game
   total_achievements = 0;
   unlocked_achievements = 0;
+  pending_game_beaten = false;
+  has_last_shown_achievement = false;
+  beaten_banner_visible = false;
   
   // Advance
   const char* remaining = cmd + pos1 + 1;
@@ -2799,6 +2650,114 @@ void handle_ach_summary_command(const char* cmd, size_t cmd_len) {
   Serial.print(unlocked_achievements);
   Serial.print(F("/"));
   Serial.println(total_achievements);
+}
+
+/**
+ * Handler for GAME_BEATEN command - the Pico detected that every progression
+ * achievement (plus a win condition, when the set defines one) is unlocked.
+ *
+ * The command arrives right behind the A= of the unlock that completed the
+ * game, but that achievement is still sitting in the display FIFO at this
+ * point (it is only drawn when the serial line goes quiet). So this just arms
+ * the celebration and the main loop runs it once the screen is actually
+ * showing the achievement that earned it.
+ */
+void handle_game_beaten_command() {
+  Serial.println(F("GAME BEATEN!"));
+
+#ifdef ENABLE_INTERNAL_WEB_APP_SUPPORT
+  send_ws_data("BEAT=1");
+#endif
+
+  pending_game_beaten = true;
+}
+
+// Run the beaten celebration on top of the achievement screen already drawn
+void celebrate_game_beaten() {
+  pending_game_beaten = false;
+
+  // A mastered game already ran the bigger celebration in show_achievement -
+  // do not stack a second fanfare on top of it
+  if (total_achievements > 0 && unlocked_achievements >= total_achievements) {
+    Serial.println(F("Already mastered - skipping beat celebration"));
+    return;
+  }
+
+  Serial.println(F("Playing beat fanfare"));
+
+#ifdef ENABLE_LCD
+  if (!has_last_shown_achievement) {
+    // nothing on screen to flash (should not happen - the unlock that beat the
+    // game is always shown first), so just play the fanfare
+    play_beat_sound();
+    return;
+  }
+
+  setCpuFrequencyMhz(160);
+
+  // Show BEATEN text in larger font over the footer area (same slot MASTERED
+  // uses). The background must be TFT_YELLOW: drawString only fills the glyph
+  // box, and the strip around it is the screen's yellow - any other color
+  // leaves a colored rectangle floating in it.
+  tft.setTextColor(TFT_BLACK, TFT_YELLOW);
+  tft.setTextDatum(MC_DATUM);
+  tft.drawString("** BEATEN! **", 120, 225, 4);
+  tft.setTextDatum(TL_DATUM);  // Reset datum
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  beaten_banner_visible = true;
+
+  uint16_t colorBlack = TFT_BLACK;
+  uint16_t colorBlue = tft.color565(0, 60, 120);
+  uint16_t colors[] = { colorBlue, colorBlack };
+  int colorIndex = 0;
+
+  // Flash background a few times before music
+  for (int i = 0; i < 6; i++)
+  {
+    redraw_achievement_screen(last_shown_achievement, colors[colorIndex]);
+    colorIndex = (colorIndex + 1) % 2;
+    delay(150);
+  }
+
+  play_beat_sound();
+
+  // Flash more after music
+  for (int i = 0; i < 6; i++)
+  {
+    redraw_achievement_screen(last_shown_achievement, colors[colorIndex]);
+    colorIndex = (colorIndex + 1) % 2;
+    delay(150);
+  }
+
+  // Restore black background
+  redraw_achievement_screen(last_shown_achievement, TFT_BLACK);
+
+  // the celebration ate several seconds of the 15s window - restart it so the
+  // achievement and the banner are actually readable before the title returns
+  go_back_to_title_screen = true;
+  go_back_to_title_screen_timestamp = millis();
+  setCpuFrequencyMhz(80);
+#endif
+}
+
+/**
+ * Repaint the strip the "** BEATEN! **" banner covered, restoring the splash
+ * footer underneath it. Called when we go back to the title screen: beating a
+ * game is not the end of the session, so the UI has to return to its normal
+ * state (MASTERED deliberately keeps its banner - there is nothing left to do).
+ */
+void clear_beaten_banner()
+{
+  beaten_banner_visible = false;
+#ifdef ENABLE_LCD
+  tft.fillRect(0, 206, tft.width(), 34, TFT_YELLOW);
+  tft.setTextColor(TFT_BLACK, TFT_YELLOW, true);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextSize(1);
+  tft.setCursor(75, 220, 2);
+  tft.println("by Odelot & GH");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+#endif
 }
 
 /**
@@ -2984,6 +2943,7 @@ void setup()
   // check if the EEPROM is configured. If not, start the configuration portal
   int wifi_configuration_tries = 0;
   bool wifi_configured = false;
+  LoginResult login_result = LOGIN_ERR_NETWORK;
   bool configured = is_eeprom_configured();
   if (!configured)
   {
@@ -3025,10 +2985,20 @@ void setup()
       else if (wifi_configured)
       {
         setSemaphore(LED_BLINK_MEDIUM, LED_RED);
-        print_line("Could not log in", 0, 2);
-        print_line("RetroAchievements!", 1, -1, 16);
-        print_line("check the credentials", 3, -1, 16);
-        print_line("and try again", 4, -1, 16);
+        if (login_result == LOGIN_ERR_INVALID_CREDENTIALS)
+        {
+          print_line("Could not log in", 0, 2);
+          print_line("RetroAchievements!", 1, -1, 16);
+          print_line("check the credentials", 3, -1, 16);
+          print_line("and try again", 4, -1, 16);
+        }
+        else
+        {
+          print_line("Could not reach", 0, 2);
+          print_line("RetroAchievements!", 1, -1, 16);
+          print_line("check your internet", 3, -1, 16);
+          print_line("and try again", 4, -1, 16);
+        }
         play_error_sound();
       }
       if (wm.startConfigPortal("NES_RA_ADAPTER", "12345678"))
@@ -3040,9 +3010,9 @@ void setup()
         print_line("Wifi OK!", 0, 0);
         String temp_ra_user = custom_param_1.getValue();
         String temp_ra_pass = custom_param_2.getValue();
-        ra_user_token = try_login_RA(temp_ra_user, temp_ra_pass);
+        ra_user_token = try_login_RA(temp_ra_user, temp_ra_pass, login_result);
         Serial.print(ra_user_token);
-        if (ra_user_token.compareTo("") != 0)
+        if (login_result == LOGIN_OK)
         {
           setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
           print_line("Logged in RA!", 1, 0);
@@ -3093,8 +3063,8 @@ void setup()
     read_ra_pass_from_eeprom(ra_pass, sizeof(ra_pass));
     
     print_line("Logging in RA...", 1, 1);
-    ra_user_token = try_login_RA(String(ra_user), String(ra_pass));
-    if (ra_user_token.compareTo("") != 0)
+    ra_user_token = try_login_RA(String(ra_user), String(ra_pass), login_result);
+    if (login_result == LOGIN_OK)
     {
       setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
       print_line("Logged in RA!", 1, 0);
@@ -3104,9 +3074,17 @@ void setup()
     else
     {
       setSemaphore(LED_BLINK_FAST, LED_RED);
-      print_line("Wrong credential or RA offline", 2, -1, -22);
-      print_line("Consider reset the adapter", 3, -1, -22 );
-      state = STATE_ERROR_LOGIN_FAILED;      
+      if (login_result == LOGIN_ERR_INVALID_CREDENTIALS)
+      {
+        print_line("Wrong RA credentials", 2, -1, -22);
+        print_line("Reset the adapter to fix them", 3, -1, -22);
+      }
+      else
+      {
+        print_line("RA offline or no internet", 2, -1, -22);
+        print_line("Restart the adapter to retry", 3, -1, -22);
+      }
+      state = STATE_ERROR_LOGIN_FAILED;
       return;
     }
   }
@@ -3179,8 +3157,15 @@ void loop()
     go_back_to_title_screen = false;
     if (fifo_is_empty(&achievements_fifo))
     {
-      
+
       show_title_screen();
+      // show_title_screen does not repaint below the game image, so the BEATEN
+      // banner would survive into the title screen - drop it and put the
+      // original footer back
+      if (beaten_banner_visible)
+      {
+        clear_beaten_banner();
+      }
     }
   }
 
@@ -3231,6 +3216,12 @@ void loop()
     fifo_dequeue(&achievements_fifo, &achievement);
     show_achievement(achievement);
   }
+  // celebrate the beaten game only after every pending achievement has been
+  // shown, so the banner lands on top of the unlock that earned it
+  else if (pending_game_beaten && fifo_is_empty(&achievements_fifo) && Serial0.available() == 0)
+  {
+    celebrate_game_beaten();
+  }
 
   // handle the serial communication with the pico - usando buffer fixo
   while (Serial0.available() > 0)
@@ -3275,6 +3266,9 @@ void loop()
       }
       else if (starts_with(serial_buffer, cmd_len, "ACH_SUMMARY=")) {
         handle_ach_summary_command(serial_buffer + 12, cmd_len - 12);
+      }
+      else if (starts_with(serial_buffer, cmd_len, "GAME_BEATEN")) {
+        handle_game_beaten_command();
       }
       else if (starts_with(serial_buffer, cmd_len, "NES_RESETED")) {
         handle_nes_reset_command();

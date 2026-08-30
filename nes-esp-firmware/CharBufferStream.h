@@ -11,10 +11,21 @@
 #ifndef CHAR_BUFFER_STREAM_H
 #define CHAR_BUFFER_STREAM_H
 
+// On Arduino it implements Stream; on desktop (unit tests) it compiles standalone
+// with the same interface, so the JSON cleaning code can be tested off-device.
+#ifdef ARDUINO
 #include <Arduino.h>
 #include <Stream.h>
-
+#define CBS_OVERRIDE override
 class CharBufferStream : public Stream {
+#else
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#define CBS_OVERRIDE
+class CharBufferStream {
+#endif
 private:
   char* _buffer;
   size_t _capacity;
@@ -92,7 +103,7 @@ public:
   char* data() { return _buffer; }
   
   // Stream write interface
-  size_t write(uint8_t c) override {
+  size_t write(uint8_t c) CBS_OVERRIDE {
     if (_buffer && _length < _capacity) {
       _buffer[_length++] = c;
       _buffer[_length] = '\0';
@@ -100,8 +111,8 @@ public:
     }
     return 0;
   }
-  
-  size_t write(const uint8_t* buf, size_t size) override {
+
+  size_t write(const uint8_t* buf, size_t size) CBS_OVERRIDE {
     if (!_buffer) return 0;
     size_t toWrite = (size < (_capacity - _length)) ? size : (_capacity - _length);
     memcpy(_buffer + _length, buf, toWrite);
@@ -111,16 +122,16 @@ public:
   }
   
   // Stream read interface
-  int available() override { return _length - _readPos; }
-  int read() override { 
+  int available() CBS_OVERRIDE { return _length - _readPos; }
+  int read() CBS_OVERRIDE {
     if (_readPos < _length) return _buffer[_readPos++];
     return -1;
   }
-  int peek() override {
+  int peek() CBS_OVERRIDE {
     if (_readPos < _length) return _buffer[_readPos];
     return -1;
   }
-  void flush() override {}
+  void flush() CBS_OVERRIDE {}
 
   // Update length after direct manipulation
   void setLength(size_t len) {

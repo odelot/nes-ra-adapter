@@ -14,12 +14,13 @@ This is distributed between cores in the following:
   - Manages serial communication with the ESP32 (primarily for Internet connectivity).
 
 - Core 1:
-  - Monitors the bus for specific memory addresses.
-  - Uses PIO to intercept the bus and applies a heuristic to detect stable values during write operations.
-  - Utilizes DMA to transfer PIO data into a ping-pong buffer for processing.
-  - Forwards data of interest to Core 0 via a circular buffer.
+  - Monitors the bus using three PIO state machines (no DMA):
+    - **SM0** captures exactly one bus snapshot per CPU write cycle (sampled inside the data-valid window of M2 high) and keeps static mirrors of the NES RAM and cartridge SRAM up to date.
+    - **SM1** watches for reads of the NMI vector ($FFFA/$FFFB) — the exact start of vblank — when core 1 takes an atomic snapshot of the mirrors and signals core 0 to run a rcheevos frame.
+    - **SM2** watches for reads of the RESET vector ($FFFC/$FFFD) to detect a console reset and reset the rcheevos runtime state.
+  - Writes to $4014 (OAM DMA) are kept as a vblank fallback for games that run with NMI disabled, plus a timer-based fallback for forced-blank periods.
 
-*Note:* The available space for serial communication is limited to around 32KB, which restricts the size of the achievement list response.
+*Note:* During game load the serial buffer holds up to ~100KB for the achievement list response; it is shrunk to 16KB once the game starts, freeing RAM for the rcheevos runtime.
 
 ---
 

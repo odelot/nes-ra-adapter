@@ -1,0 +1,205 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 1090" width="1040" height="1090" font-family="Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif">
+
+  <rect x="0" y="0" width="1040" height="1090" fill="#ffffff"/>
+
+  <!-- caption -->
+  <text x="48" y="38" font-size="15" font-weight="bold" fill="#1b1b1b">NES RA Adapter</text>
+  <text x="48" y="58" font-size="12.5" fill="#555">architecture &#8211; v1.4</text>
+
+  <!-- ================= bus lines (drawn first, boxes sit on top) ============ -->
+  <!-- control: M2, /ROMSEL, R/W -->
+  <path d="M900 62 L900 650" stroke="#1b1b1b" stroke-width="2.6" fill="none"/>
+  <path d="M900 710 L900 885" stroke="#1b1b1b" stroke-width="2.6" fill="none"/>
+  <!-- address A0-A14 -->
+  <path d="M935 62 L935 650" stroke="#1b1b1b" stroke-width="2.6" fill="none"/>
+  <path d="M935 710 L935 910" stroke="#1b1b1b" stroke-width="2.6" fill="none"/>
+  <!-- data D0-D7 -->
+  <path d="M970 62 L970 650" stroke="#1b1b1b" stroke-width="2.6" fill="none"/>
+  <path d="M970 710 L970 935" stroke="#1b1b1b" stroke-width="2.6" fill="none"/>
+
+  <!-- ============================ CARTRIDGE ================================ -->
+  <rect x="245" y="20" width="765" height="80" rx="14" fill="none" stroke="#1b1b1b" stroke-width="2.4"/>
+  <text x="264" y="50" font-size="16" font-weight="bold" fill="#1565c0">Cartridge</text>
+
+  <!-- ========================== NES RA ADAPTER ============================= -->
+  <rect x="245" y="115" width="765" height="735" rx="14" fill="none" stroke="#1b1b1b" stroke-width="2.4"/>
+  <text x="264" y="145" font-size="16" font-weight="bold" fill="#1565c0">NES RA Adapter</text>
+
+  <!-- PICO -->
+  <rect x="285" y="165" width="595" height="395" rx="12" fill="none" stroke="#1b1b1b" stroke-width="2"/>
+  <text x="583" y="189" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#333">Raspberry Pi Pico RP2040 (purple board) &#8211; 200 MHz</text>
+
+  <!-- Core 0 -->
+  <rect x="300" y="205" width="155" height="300" rx="10" fill="none" stroke="#333" stroke-width="1.8"/>
+  <text x="378" y="226" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#333">Core 0</text>
+
+  <rect x="310" y="236" width="135" height="96" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="378" y="262" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1b1b1b">rcheevos</text>
+  <text x="378" y="281" text-anchor="middle" font-size="10" fill="#555">rc_client_do_frame()</text>
+  <text x="378" y="299" text-anchor="middle" font-size="10" fill="#555">one frame per</text>
+  <text x="378" y="315" text-anchor="middle" font-size="10" fill="#555">vblank signal</text>
+
+  <rect x="310" y="350" width="135" height="70" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="378" y="376" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1b1b1b">CRC32</text>
+  <text x="378" y="395" text-anchor="middle" font-size="10" fill="#555">cartridge ID</text>
+  <text x="378" y="411" text-anchor="middle" font-size="10" fill="#555">(PRG-ROM banks)</text>
+
+  <!-- Core 1 -->
+  <rect x="490" y="205" width="165" height="300" rx="10" fill="none" stroke="#333" stroke-width="1.8"/>
+  <text x="573" y="226" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#333">Core 1</text>
+
+  <rect x="500" y="236" width="145" height="96" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="573" y="260" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1b1b1b">static mirrors</text>
+  <text x="573" y="279" text-anchor="middle" font-size="10" fill="#555">NES RAM 2 KB</text>
+  <text x="573" y="295" text-anchor="middle" font-size="10" fill="#555">cart SRAM 8 KB</text>
+  <text x="573" y="315" text-anchor="middle" font-size="10" fill="#555">updated per write</text>
+
+  <rect x="500" y="350" width="145" height="96" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="573" y="374" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1b1b1b">atomic snapshot</text>
+  <text x="573" y="393" text-anchor="middle" font-size="10" fill="#555">taken at vblank</text>
+  <text x="573" y="409" text-anchor="middle" font-size="10" fill="#555">start, with</text>
+  <text x="573" y="429" text-anchor="middle" font-size="10" fill="#555">write staging</text>
+
+  <text x="573" y="470" text-anchor="middle" font-size="9.5" fill="#777">drains the PIO FIFOs directly</text>
+  <text x="573" y="486" text-anchor="middle" font-size="9.5" fill="#777">&#8211; no DMA, no buffers &#8211;</text>
+
+  <!-- PIO -->
+  <rect x="690" y="205" width="175" height="300" rx="10" fill="none" stroke="#333" stroke-width="1.8"/>
+  <text x="778" y="226" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#333">PIO state machines</text>
+
+  <rect x="698" y="234" width="160" height="62" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="778" y="252" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">memoryBusWrite</text>
+  <text x="778" y="269" text-anchor="middle" font-size="9.5" fill="#555">one sample per CPU</text>
+  <text x="778" y="285" text-anchor="middle" font-size="9.5" fill="#555">write cycle &#183; pio0</text>
+
+  <rect x="698" y="302" width="160" height="54" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="778" y="320" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">vectorWatch NMI</text>
+  <text x="778" y="337" text-anchor="middle" font-size="9.5" fill="#555">$FFFA/$FFFB read</text>
+  <text x="778" y="351" text-anchor="middle" font-size="9.5" fill="#555">= vblank start &#183; pio0</text>
+
+  <rect x="698" y="362" width="160" height="54" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="778" y="380" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">vectorWatch RESET</text>
+  <text x="778" y="397" text-anchor="middle" font-size="9.5" fill="#555">$FFFC/$FFFD read</text>
+  <text x="778" y="411" text-anchor="middle" font-size="9.5" fill="#555">= console reset &#183; pio0</text>
+
+  <rect x="698" y="422" width="160" height="62" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="778" y="440" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">m2Frame</text>
+  <text x="778" y="457" text-anchor="middle" font-size="9.5" fill="#555">counts M2 cycles =</text>
+  <text x="778" y="473" text-anchor="middle" font-size="9.5" fill="#555">frame clock &#183; pio1</text>
+
+  <!-- internal orange flow: PIO -> Core 1 -> Core 0 -->
+  <path d="M687 355 L662 355" stroke="#e8710a" stroke-width="3.4" fill="none"/>
+  <path d="M655 355 L666 350 L666 360 Z" fill="#e8710a"/>
+  <text transform="rotate(-90 672 305)" x="672" y="305" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#e8710a">FIFO</text>
+
+  <path d="M487 355 L462 355" stroke="#e8710a" stroke-width="3.4" fill="none"/>
+  <path d="M455 355 L466 350 L466 360 Z" fill="#e8710a"/>
+  <text transform="rotate(-90 472 300)" x="472" y="300" text-anchor="middle" font-size="9.5" font-weight="bold" fill="#e8710a">snapshot</text>
+
+  <!-- cartridge read for CRC32 (out: address/control, in: data) -->
+  <text x="583" y="522" text-anchor="middle" font-size="9.5" fill="#777">cartridge read for CRC32 (bus isolated from the console)</text>
+  <path d="M330 420 L330 532 L975 532" stroke="#e03131" stroke-width="2.6" fill="none"/>
+  <path d="M352 546 L975 546" stroke="#2e9e4f" stroke-width="2.6" fill="none"/>
+  <path d="M352 420 L352 546" stroke="#2e9e4f" stroke-width="2.6" fill="none"/>
+
+  <!-- bus taps into the PIO (green = monitored input) -->
+  <path d="M975 265 L866 265" stroke="#2e9e4f" stroke-width="2.6" fill="none"/>
+  <path d="M975 329 L866 329" stroke="#2e9e4f" stroke-width="2.6" fill="none"/>
+  <path d="M975 389 L866 389" stroke="#2e9e4f" stroke-width="2.6" fill="none"/>
+  <path d="M975 453 L866 453" stroke="#2e9e4f" stroke-width="2.6" fill="none"/>
+
+  <!-- UART Pico <-> ESP32 -->
+  <path d="M470 566 L470 594" stroke="#e8710a" stroke-width="3.4" fill="none"/>
+  <path d="M470 560 L465 571 L475 571 Z" fill="#e8710a"/>
+  <path d="M470 600 L465 589 L475 589 Z" fill="#e8710a"/>
+  <text x="486" y="578" font-size="10.5" font-weight="bold" fill="#e8710a">UART 115200 bps</text>
+  <text x="486" y="593" font-size="9.5" fill="#777">commands + RetroAchievements payload</text>
+
+  <!-- ESP32 -->
+  <rect x="352" y="600" width="448" height="160" rx="12" fill="none" stroke="#1b1b1b" stroke-width="2"/>
+
+  <rect x="362" y="616" width="138" height="112" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="431" y="640" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">Wi-Fi + HTTP</text>
+  <text x="431" y="658" text-anchor="middle" font-size="9.5" fill="#555">RetroAchievements</text>
+  <text x="431" y="673" text-anchor="middle" font-size="9.5" fill="#555">API calls</text>
+  <text x="431" y="695" text-anchor="middle" font-size="9.5" fill="#555">Wi-Fi + RA</text>
+  <text x="431" y="710" text-anchor="middle" font-size="9.5" fill="#555">credentials (EEPROM)</text>
+
+  <rect x="506" y="616" width="138" height="112" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="575" y="640" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">LittleFS</text>
+  <text x="575" y="658" text-anchor="middle" font-size="9.5" fill="#555">CRC32 &#8596; MD5 map</text>
+  <text x="575" y="673" text-anchor="middle" font-size="9.5" fill="#555">for ~2000 games</text>
+  <text x="575" y="695" text-anchor="middle" font-size="9.5" fill="#555">+ game and</text>
+  <text x="575" y="710" text-anchor="middle" font-size="9.5" fill="#555">achievement images</text>
+
+  <rect x="650" y="616" width="138" height="112" rx="8" fill="#fafafa" stroke="#333" stroke-width="1.4"/>
+  <text x="719" y="640" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">streaming filter</text>
+  <text x="719" y="658" text-anchor="middle" font-size="9.5" fill="#555">cleans the patch</text>
+  <text x="719" y="673" text-anchor="middle" font-size="9.5" fill="#555">JSON while it</text>
+  <text x="719" y="695" text-anchor="middle" font-size="9.5" fill="#555">downloads, to fit</text>
+  <text x="719" y="710" text-anchor="middle" font-size="9.5" fill="#555">the Pico RAM</text>
+
+  <text x="576" y="750" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#333">ESP32 C3 Supermini</text>
+
+  <!-- peripherals -->
+  <rect x="352" y="775" width="100" height="50" rx="8" fill="none" stroke="#333" stroke-width="1.6"/>
+  <text x="402" y="798" text-anchor="middle" font-size="10.5" fill="#1b1b1b">Reset Btn</text>
+  <text x="402" y="813" text-anchor="middle" font-size="9" fill="#777">(adapter config)</text>
+
+  <rect x="468" y="775" width="100" height="50" rx="8" fill="none" stroke="#333" stroke-width="1.6"/>
+  <text x="518" y="798" text-anchor="middle" font-size="10.5" fill="#1b1b1b">LCD ST7789</text>
+  <text x="518" y="813" text-anchor="middle" font-size="9" fill="#777">240x240</text>
+
+  <rect x="584" y="775" width="100" height="50" rx="8" fill="none" stroke="#333" stroke-width="1.6"/>
+  <text x="634" y="798" text-anchor="middle" font-size="10.5" fill="#1b1b1b">Buzzer</text>
+  <text x="634" y="813" text-anchor="middle" font-size="9" fill="#777">sound effects</text>
+
+  <rect x="700" y="775" width="100" height="50" rx="8" fill="none" stroke="#333" stroke-width="1.6"/>
+  <text x="750" y="798" text-anchor="middle" font-size="10.5" fill="#1b1b1b">Status LED</text>
+  <text x="750" y="813" text-anchor="middle" font-size="9" fill="#777">optional</text>
+
+  <path d="M402 760 L402 775" stroke="#1b1b1b" stroke-width="1.6" fill="none"/>
+  <path d="M518 760 L518 775" stroke="#1b1b1b" stroke-width="1.6" fill="none"/>
+  <path d="M634 760 L634 775" stroke="#1b1b1b" stroke-width="1.6" fill="none"/>
+  <path d="M750 760 L750 775" stroke="#1b1b1b" stroke-width="1.6" fill="none"/>
+
+  <!-- analog switch block -->
+  <rect x="860" y="650" width="135" height="60" rx="8" fill="#ffffff" stroke="#1b1b1b" stroke-width="2"/>
+  <text x="928" y="674" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">26x analog switch</text>
+  <text x="928" y="691" text-anchor="middle" font-size="9.5" fill="#555">SN74LVC1G3157DBVR</text>
+  <path d="M800 680 L860 680" stroke="#1b1b1b" stroke-width="1.6" fill="none"/>
+  <text x="830" y="672" text-anchor="middle" font-size="9" fill="#777">enable</text>
+
+  <!-- internet -->
+  <circle cx="110" cy="680" r="62" fill="#ffffff" stroke="#1b1b1b" stroke-width="2.4"/>
+  <text x="110" y="676" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1b1b1b">Internet</text>
+  <text x="110" y="694" text-anchor="middle" font-size="10" fill="#555">/ Wi-Fi</text>
+  <path d="M172 680 L352 680" stroke="#1b1b1b" stroke-width="2.4" fill="none"/>
+
+  <rect x="40" y="790" width="140" height="62" rx="10" fill="none" stroke="#1b1b1b" stroke-width="1.8"/>
+  <text x="110" y="812" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1b1b1b">Web App</text>
+  <text x="110" y="828" text-anchor="middle" font-size="9.5" fill="#555">LCD mirror</text>
+  <text x="110" y="843" text-anchor="middle" font-size="9.5" fill="#555">WebSocket + mDNS</text>
+  <path d="M110 742 L110 790" stroke="#1b1b1b" stroke-width="1.8" fill="none"/>
+
+  <!-- =============================== NES ==================================== -->
+  <rect x="245" y="865" width="765" height="115" rx="14" fill="none" stroke="#1b1b1b" stroke-width="2.4"/>
+  <text x="264" y="895" font-size="16" font-weight="bold" fill="#1565c0">NES</text>
+
+  <text x="894" y="896" text-anchor="end" font-size="10.5" fill="#1b1b1b">M2, /ROMSEL, R/W</text>
+  <text x="929" y="921" text-anchor="end" font-size="10.5" fill="#1b1b1b">Address A0-A14</text>
+  <text x="964" y="946" text-anchor="end" font-size="10.5" fill="#1b1b1b">Data D0-D7</text>
+
+  <!-- ============================== legend ================================== -->
+  <path d="M280 996 L340 996" stroke="#2e9e4f" stroke-width="3.4" fill="none"/>
+  <text x="352" y="1000" font-size="11" fill="#1b1b1b">input &#8211; bus signals monitored by the adapter</text>
+
+  <path d="M280 1018 L340 1018" stroke="#e03131" stroke-width="3.4" fill="none"/>
+  <text x="352" y="1022" font-size="11" fill="#1b1b1b">output &#8211; bus driven by the adapter (cartridge read)</text>
+
+  <path d="M280 1040 L340 1040" stroke="#e8710a" stroke-width="3.4" fill="none"/>
+  <text x="352" y="1044" font-size="11" fill="#1b1b1b">internal data flow</text>
+
+  <text x="280" y="1072" font-size="10.5" fill="#777">vblank source priority: NMI vector &#8594; $4014 (OAM DMA) &#8594; M2 frame clock &#8594; timer</text>
+
+</svg>
