@@ -227,6 +227,15 @@ typedef enum HttpRequestResult
   HTTP_ERR_REPONSE_TOO_BIG = -5,
 };
 
+// RA login outcome - tells bad credentials apart from network/RA outage so the
+// caller can decide whether to save credentials and what to show on the screen
+typedef enum LoginResult
+{
+  LOGIN_OK = 0,
+  LOGIN_ERR_INVALID_CREDENTIALS = 1,
+  LOGIN_ERR_NETWORK = 2,
+};
+
 // Device state machine states
 typedef enum DeviceState {
   STATE_IDENTIFY_CARTRIDGE = 0,
@@ -1275,56 +1284,81 @@ void wifi_manager_init(WiFiManager &wm)
 /**
  * functions related to the RA login
  */
-String try_login_RA(String ra_user, String ra_pass)
+String try_login_RA(String ra_user, String ra_pass, LoginResult &login_result)
 {
   // print_memory_stats("BEFORE LOGIN");
-  
+
+  login_result = LOGIN_ERR_NETWORK;
+
   // Construir URL completa em buffer fixo
   char login_url[384];
-  snprintf(login_url, sizeof(login_url), "%sr=login&u=%s&p=%s", 
+  snprintf(login_url, sizeof(login_url), "%sr=login&u=%s&p=%s",
            base_url, ra_user.c_str(), ra_pass.c_str());
 
-  
+
   // print_memory_stats("BEFORE HTTP REQUEST (login)");
-  
+
   int ret = perform_http_request_buffer(login_url, GET, "", 0, response, true, 3, 5000, 500, nullptr);
-  
+
   // print_memory_stats("AFTER HTTP REQUEST (login)");
-  
+
+  String ra_token = "";
+
   if (ret < 0)
   {
     Serial.print(F("request error: "));
     Serial.println(http_request_result_to_cstr(ret));
+    if (ret == HTTP_ERR_HTTP_4XX)
+    {
+      login_result = LOGIN_ERR_INVALID_CREDENTIALS;
+    }
+  }
+  // RA answers login errors with HTTP 200 + {"Success":false,"Status":401,...},
+  // so the body must be checked before trusting the response
+  else if (extractBoolFromBuffer(response, "\"Success\"") == 0)
+  {
+    String server_error = extractJsonStringFromBuffer(response, "\"Error\":");
+    Serial.print(F("RA login refused: ")); Serial.println(server_error);
+    if (response.indexOf("invalid_credentials") != -1)
+    {
+      login_result = LOGIN_ERR_INVALID_CREDENTIALS;
+    }
+  }
+  else
+  {
+    ra_token = extractJsonStringFromBuffer(response, "\"Token\":");
+    ra_token.trim();
+    Serial.print(F("RA Token: ")); Serial.println(ra_token);
+  }
+
+  // print_memory_stats("AFTER TOKEN EXTRACT");
+
+  response.clear();
+
+  // print_memory_stats("AFTER LOGIN COMPLETE");
+
+  // Success:true but no usable token also counts as failure
+  if (ra_token.length() == 0)
+  {
     state = STATE_ERROR_LOGIN_FAILED;
     Serial0.print(F("ERROR=253-LOGIN_FAILED\r\n"));
     Serial.print(F("ERROR=253-LOGIN_FAILED\r\n"));
-    return String("null");
+    return String("");
   }
 
- 
-  String ra_token = extractTokenFromBuffer(response);
-  ra_token.trim();
-  
-  Serial.print(F("RA Token: ")); Serial.println(ra_token);
-  
-  // print_memory_stats("AFTER TOKEN EXTRACT");
-  
-  response.clear();
-  
-  // print_memory_stats("AFTER LOGIN COMPLETE");
-
+  login_result = LOGIN_OK;
   return ra_token;
 }
 
-// Versão que extrai token do CharBufferStream sem criar cópia
-String extractTokenFromBuffer(CharBufferStream &buf)
+// Extrai um campo string do JSON no CharBufferStream sem criar cópia do buffer
+// (key deve incluir aspas e dois pontos, ex: "\"Token\":")
+String extractJsonStringFromBuffer(CharBufferStream &buf, const char* key)
 {
-  const char* key = "\"Token\":";
   int start = buf.indexOf(key);
   if (start == -1) return "";
 
   // Avança até o início do valor (pula aspas)
-  start = buf.indexOf("\"", start + 8);
+  start = buf.indexOf("\"", start + strlen(key));
   if (start == -1) return "";
 
   int end = buf.indexOf("\"", start + 1);
@@ -1333,13 +1367,35 @@ String extractTokenFromBuffer(CharBufferStream &buf)
   // Extrai substring diretamente
   char* data = buf.data();
   int len = end - start - 1;
-  if (len <= 0 || len > 64) return "";
-  
-  char token[65];
-  memcpy(token, data + start + 1, len);
-  token[len] = '\0';
-  
-  return String(token);
+  if (len <= 0 || len > 128) return "";
+
+  char value[129];
+  memcpy(value, data + start + 1, len);
+  value[len] = '\0';
+
+  return String(value);
+}
+
+// Lê um campo booleano do JSON no buffer, tolerando espaços depois da chave
+// ("Success":false ou "Success": false). Retorna 1 = true, 0 = false, -1 = ausente
+int extractBoolFromBuffer(CharBufferStream &buf, const char* key)
+{
+  int pos = buf.indexOf(key);
+  if (pos == -1) return -1;
+  pos += strlen(key);
+  char c;
+  while ((c = buf.charAt(pos)) != '\0')
+  {
+    if (c == 't') return 1;
+    if (c == 'f') return 0;
+    if (c == ':' || c == ' ' || c == '\t' || c == '\r' || c == '\n')
+    {
+      pos++;
+      continue;
+    }
+    return -1;
+  }
+  return -1;
 }
 
 
@@ -2887,6 +2943,7 @@ void setup()
   // check if the EEPROM is configured. If not, start the configuration portal
   int wifi_configuration_tries = 0;
   bool wifi_configured = false;
+  LoginResult login_result = LOGIN_ERR_NETWORK;
   bool configured = is_eeprom_configured();
   if (!configured)
   {
@@ -2928,10 +2985,20 @@ void setup()
       else if (wifi_configured)
       {
         setSemaphore(LED_BLINK_MEDIUM, LED_RED);
-        print_line("Could not log in", 0, 2);
-        print_line("RetroAchievements!", 1, -1, 16);
-        print_line("check the credentials", 3, -1, 16);
-        print_line("and try again", 4, -1, 16);
+        if (login_result == LOGIN_ERR_INVALID_CREDENTIALS)
+        {
+          print_line("Could not log in", 0, 2);
+          print_line("RetroAchievements!", 1, -1, 16);
+          print_line("check the credentials", 3, -1, 16);
+          print_line("and try again", 4, -1, 16);
+        }
+        else
+        {
+          print_line("Could not reach", 0, 2);
+          print_line("RetroAchievements!", 1, -1, 16);
+          print_line("check your internet", 3, -1, 16);
+          print_line("and try again", 4, -1, 16);
+        }
         play_error_sound();
       }
       if (wm.startConfigPortal("NES_RA_ADAPTER", "12345678"))
@@ -2943,9 +3010,9 @@ void setup()
         print_line("Wifi OK!", 0, 0);
         String temp_ra_user = custom_param_1.getValue();
         String temp_ra_pass = custom_param_2.getValue();
-        ra_user_token = try_login_RA(temp_ra_user, temp_ra_pass);
+        ra_user_token = try_login_RA(temp_ra_user, temp_ra_pass, login_result);
         Serial.print(ra_user_token);
-        if (ra_user_token.compareTo("") != 0)
+        if (login_result == LOGIN_OK)
         {
           setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
           print_line("Logged in RA!", 1, 0);
@@ -2996,8 +3063,8 @@ void setup()
     read_ra_pass_from_eeprom(ra_pass, sizeof(ra_pass));
     
     print_line("Logging in RA...", 1, 1);
-    ra_user_token = try_login_RA(String(ra_user), String(ra_pass));
-    if (ra_user_token.compareTo("") != 0)
+    ra_user_token = try_login_RA(String(ra_user), String(ra_pass), login_result);
+    if (login_result == LOGIN_OK)
     {
       setSemaphore(LED_BLINK_MEDIUM, LED_GREEN);
       print_line("Logged in RA!", 1, 0);
@@ -3007,9 +3074,17 @@ void setup()
     else
     {
       setSemaphore(LED_BLINK_FAST, LED_RED);
-      print_line("Wrong credential or RA offline", 2, -1, -22);
-      print_line("Consider reset the adapter", 3, -1, -22 );
-      state = STATE_ERROR_LOGIN_FAILED;      
+      if (login_result == LOGIN_ERR_INVALID_CREDENTIALS)
+      {
+        print_line("Wrong RA credentials", 2, -1, -22);
+        print_line("Reset the adapter to fix them", 3, -1, -22);
+      }
+      else
+      {
+        print_line("RA offline or no internet", 2, -1, -22);
+        print_line("Restart the adapter to retry", 3, -1, -22);
+      }
+      state = STATE_ERROR_LOGIN_FAILED;
       return;
     }
   }
